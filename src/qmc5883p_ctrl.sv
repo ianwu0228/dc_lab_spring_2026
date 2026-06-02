@@ -12,10 +12,7 @@ module qmc5883l_ctrl (
     output reg  [15:0] mag_x,
     output reg  [15:0] mag_y,
     output reg  [15:0] mag_z,
-    output wire signed [31:0] mag_x_gauss_q16,
-    output wire signed [31:0] mag_y_gauss_q16,
-    output wire signed [31:0] mag_z_gauss_q16,
-    output wire        [31:0] range_gauss_q16,
+    output reg         sample_valid,
 
     // Debug outputs — connect to LEDs or SignalTap in Quartus
     output wire [4:0]  dbg_state,
@@ -147,7 +144,7 @@ module qmc5883l_ctrl (
     localparam [1:0] CFG_ODR      = QMC_ODR_200HZ;
     localparam [1:0] CFG_OSR      = QMC_OSR_4;
     localparam [1:0] CFG_DSR      = QMC_DSR_1;
-    localparam [1:0] CFG_RANGE    = QMC_RANGE_8G;
+    localparam [1:0] CFG_RANGE    = QMC_RANGE_2G;
     localparam [1:0] CFG_SETRESET = QMC_SETRESET_ON;
 
     localparam [7:0] CTRL1_VALUE = {
@@ -162,36 +159,6 @@ module qmc5883l_ctrl (
         CFG_RANGE,     // bits [3:2]
         CFG_SETRESET   // bits [1:0]
     };
-
-    // =========================================================================
-    // Convert raw two's-complement samples to signed Q16.16 Gauss.
-    // Each reciprocal is pre-scaled by 2^16 so synthesis uses a constant
-    // multiplier and shift instead of a combinational divider.
-    // =========================================================================
-    function automatic signed [31:0] raw_to_gauss_q16;
-        input signed [15:0] raw_value;
-        reg signed [47:0] scaled_value;
-        begin
-            case (CFG_RANGE)
-                QMC_RANGE_30G: scaled_value = raw_value * 32'sd4_294_967;
-                QMC_RANGE_12G: scaled_value = raw_value * 32'sd1_717_987;
-                QMC_RANGE_8G:  scaled_value = raw_value * 32'sd1_145_325;
-                default:      scaled_value = raw_value * 32'sd286_331;
-            endcase
-            raw_to_gauss_q16 = scaled_value >>> 16;
-        end
-    endfunction
-
-    assign mag_x_gauss_q16 = raw_to_gauss_q16($signed(mag_x));
-    assign mag_y_gauss_q16 = raw_to_gauss_q16($signed(mag_y));
-    assign mag_z_gauss_q16 = raw_to_gauss_q16($signed(mag_z));
-
-    assign range_gauss_q16 =
-        (CFG_RANGE == QMC_RANGE_30G) ? 32'd1_966_080 :
-        (CFG_RANGE == QMC_RANGE_12G) ? 32'd786_432 :
-        (CFG_RANGE == QMC_RANGE_8G)  ? 32'd524_288 :
-                                       32'd131_072;
-
 
     // 20 ms at 50 MHz = 1,000,000 cycles
     localparam DELAY_20MS = 20'd1_000_000;
@@ -274,6 +241,7 @@ module qmc5883l_ctrl (
             mag_x       <= 16'd0;
             mag_y       <= 16'd0;
             mag_z       <= 16'd0;
+            sample_valid <= 1'b0;
             buf_xl      <= 8'd0;
             buf_xh      <= 8'd0;
             buf_yl      <= 8'd0;
@@ -283,6 +251,7 @@ module qmc5883l_ctrl (
         end else begin
             // Default: do not start a new I2C command unless a state below requests it.
             i2c_go <= 1'b0;
+            sample_valid <= 1'b0;
 
             // If any write/address byte gets NACKed, retry from chip-ID read.
             if (i2c_done && i2c_ack_err) begin
@@ -586,6 +555,7 @@ module qmc5883l_ctrl (
                             mag_x <= {buf_xh, buf_xl};
                             mag_y <= {buf_yh, buf_yl};
                             mag_z <= {buf_zh, buf_zl};
+                            sample_valid <= 1'b1;
                             state <= S_RD_START;
                         end
                     end

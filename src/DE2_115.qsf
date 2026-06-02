@@ -44,8 +44,12 @@ set_global_assignment -name ORIGINAL_QUARTUS_VERSION 15.0.0
 set_global_assignment -name PROJECT_CREATION_TIME_DATE "16:02:00  MAY 24, 2026"
 set_global_assignment -name LAST_QUARTUS_VERSION 15.0.0
 set_global_assignment -name SDC_FILE ../Lab1/Lab1/src/DE2_115/DE2_115.sdc
-set_global_assignment -name SYSTEMVERILOG_FILE qmc5883l_ctrl.sv
+set_global_assignment -name SYSTEMVERILOG_FILE qmc5883p_ctrl.sv
 set_global_assignment -name SYSTEMVERILOG_FILE i2c_master.sv
+set_global_assignment -name SYSTEMVERILOG_FILE unsigned_divider.sv
+set_global_assignment -name SYSTEMVERILOG_FILE mag_calibration_manager.sv
+set_global_assignment -name SYSTEMVERILOG_FILE mag_calibrator.sv
+set_global_assignment -name SYSTEMVERILOG_FILE lcd_ctrl.sv
 set_global_assignment -name SYSTEMVERILOG_FILE HexTo7Seg.sv
 set_global_assignment -name SYSTEMVERILOG_FILE Debounce.sv
 set_global_assignment -name SYSTEMVERILOG_FILE DE2_115.sv

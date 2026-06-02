@@ -136,8 +136,25 @@ module DE2_115 (
 	inout [6:0] EX_IO
 );
 
+logic key0down;
+logic key1down;
 logic key3down;
+logic key0down_d;
+logic key1down_d;
 
+Debounce deb0(
+    .i_in(KEY[0]),
+    .i_rst_n(1'b1),
+    .i_clk(CLOCK_50),
+    .o_debounced(key0down)
+);
+
+Debounce deb1(
+    .i_in(KEY[1]),
+    .i_rst_n(1'b1),
+    .i_clk(CLOCK_50),
+    .o_debounced(key1down)
+);
 
 Debounce deb3(
     .i_in(KEY[3]),
@@ -145,6 +162,19 @@ Debounce deb3(
     .i_clk(CLOCK_50),
     .o_debounced(key3down)
 );
+
+always @(posedge CLOCK_50 or negedge key3down) begin
+    if (!key3down) begin
+        key0down_d <= 1'b1;
+        key1down_d <= 1'b1;
+    end else begin
+        key0down_d <= key0down;
+        key1down_d <= key1down;
+    end
+end
+
+wire calibration_start_pulse  = key0down_d && !key0down;
+wire calibration_finish_pulse = key1down_d && !key1down;
 
 assign HEX4 = '1;
 assign HEX5 = '1;
@@ -163,11 +193,7 @@ wire [15:0] mag1_x, mag1_y, mag1_z;
 wire [15:0] mag2_x, mag2_y, mag2_z;
 wire [15:0] mag3_x, mag3_y, mag3_z;
 wire [15:0] mag4_x, mag4_y, mag4_z;
-wire signed [31:0] mag1_x_gauss_q16, mag1_y_gauss_q16, mag1_z_gauss_q16;
-wire signed [31:0] mag2_x_gauss_q16, mag2_y_gauss_q16, mag2_z_gauss_q16;
-wire signed [31:0] mag3_x_gauss_q16, mag3_y_gauss_q16, mag3_z_gauss_q16;
-wire signed [31:0] mag4_x_gauss_q16, mag4_y_gauss_q16, mag4_z_gauss_q16;
-wire        [31:0] range_gauss_q16;
+wire [3:0]  qmc_sample_valid;
 wire [4:0]  qmc_dbg_state [0:3];
 wire [3:0]  qmc_dbg_err;
 wire [7:0]  qmc_dbg_chip_id [0:3];
@@ -208,10 +234,7 @@ qmc5883l_ctrl u_qmc_1 (
     .mag_x(mag1_x),
     .mag_y(mag1_y),
     .mag_z(mag1_z),
-    .mag_x_gauss_q16(mag1_x_gauss_q16),
-    .mag_y_gauss_q16(mag1_y_gauss_q16),
-    .mag_z_gauss_q16(mag1_z_gauss_q16),
-    .range_gauss_q16(range_gauss_q16),
+    .sample_valid(qmc_sample_valid[0]),
     
     .dbg_state(qmc_dbg_state[0]),
     .dbg_err(qmc_dbg_err[0]),
@@ -232,10 +255,7 @@ qmc5883l_ctrl u_qmc_2 (
     .mag_x(mag2_x),
     .mag_y(mag2_y),
     .mag_z(mag2_z),
-    .mag_x_gauss_q16(mag2_x_gauss_q16),
-    .mag_y_gauss_q16(mag2_y_gauss_q16),
-    .mag_z_gauss_q16(mag2_z_gauss_q16),
-    .range_gauss_q16(),
+    .sample_valid(qmc_sample_valid[1]),
 
     .dbg_state(qmc_dbg_state[1]),
     .dbg_err(qmc_dbg_err[1]),
@@ -256,10 +276,7 @@ qmc5883l_ctrl u_qmc_3 (
     .mag_x(mag3_x),
     .mag_y(mag3_y),
     .mag_z(mag3_z),
-    .mag_x_gauss_q16(mag3_x_gauss_q16),
-    .mag_y_gauss_q16(mag3_y_gauss_q16),
-    .mag_z_gauss_q16(mag3_z_gauss_q16),
-    .range_gauss_q16(),
+    .sample_valid(qmc_sample_valid[2]),
 
     .dbg_state(qmc_dbg_state[2]),
     .dbg_err(qmc_dbg_err[2]),
@@ -280,10 +297,7 @@ qmc5883l_ctrl u_qmc_4 (
     .mag_x(mag4_x),
     .mag_y(mag4_y),
     .mag_z(mag4_z),
-    .mag_x_gauss_q16(mag4_x_gauss_q16),
-    .mag_y_gauss_q16(mag4_y_gauss_q16),
-    .mag_z_gauss_q16(mag4_z_gauss_q16),
-    .range_gauss_q16(),
+    .sample_valid(qmc_sample_valid[3]),
 
     .dbg_state(qmc_dbg_state[3]),
     .dbg_err(qmc_dbg_err[3]),
@@ -295,16 +309,121 @@ qmc5883l_ctrl u_qmc_4 (
 );
 
 // =====================================================================
+// FPGA-only magnetometer calibration
+// =====================================================================
+wire               calibration_collecting;
+wire               calibration_calculating;
+wire               calibration_done;
+wire signed [15:0] cal_s1_offset_x, cal_s1_offset_y, cal_s1_offset_z;
+wire signed [15:0] cal_s2_offset_x, cal_s2_offset_y, cal_s2_offset_z;
+wire signed [15:0] cal_s3_offset_x, cal_s3_offset_y, cal_s3_offset_z;
+wire signed [15:0] cal_s4_offset_x, cal_s4_offset_y, cal_s4_offset_z;
+wire        [31:0] cal_s1_scale_x_q16, cal_s1_scale_y_q16, cal_s1_scale_z_q16;
+wire        [31:0] cal_s2_scale_x_q16, cal_s2_scale_y_q16, cal_s2_scale_z_q16;
+wire        [31:0] cal_s3_scale_x_q16, cal_s3_scale_y_q16, cal_s3_scale_z_q16;
+wire        [31:0] cal_s4_scale_x_q16, cal_s4_scale_y_q16, cal_s4_scale_z_q16;
+
+wire signed [15:0] cal_mag1_x, cal_mag1_y, cal_mag1_z;
+wire signed [15:0] cal_mag2_x, cal_mag2_y, cal_mag2_z;
+wire signed [15:0] cal_mag3_x, cal_mag3_y, cal_mag3_z;
+wire signed [15:0] cal_mag4_x, cal_mag4_y, cal_mag4_z;
+wire signed [31:0] cal_mag1_x_gauss_q16, cal_mag1_y_gauss_q16, cal_mag1_z_gauss_q16;
+wire signed [31:0] cal_mag2_x_gauss_q16, cal_mag2_y_gauss_q16, cal_mag2_z_gauss_q16;
+wire signed [31:0] cal_mag3_x_gauss_q16, cal_mag3_y_gauss_q16, cal_mag3_z_gauss_q16;
+wire signed [31:0] cal_mag4_x_gauss_q16, cal_mag4_y_gauss_q16, cal_mag4_z_gauss_q16;
+
+mag_calibration_manager u_calibration_manager (
+    .clk                (CLOCK_50),
+    .rst_n              (key3down),
+    .start_calibration  (calibration_start_pulse),
+    .finish_calibration (calibration_finish_pulse),
+    .sample_valid       (qmc_sample_valid),
+
+    .s1_x (mag1_x), .s1_y (mag1_y), .s1_z (mag1_z),
+    .s2_x (mag2_x), .s2_y (mag2_y), .s2_z (mag2_z),
+    .s3_x (mag3_x), .s3_y (mag3_y), .s3_z (mag3_z),
+    .s4_x (mag4_x), .s4_y (mag4_y), .s4_z (mag4_z),
+
+    .collecting       (calibration_collecting),
+    .calculating      (calibration_calculating),
+    .calibration_done (calibration_done),
+
+    .s1_offset_x (cal_s1_offset_x), .s1_offset_y (cal_s1_offset_y),
+    .s1_offset_z (cal_s1_offset_z),
+    .s2_offset_x (cal_s2_offset_x), .s2_offset_y (cal_s2_offset_y),
+    .s2_offset_z (cal_s2_offset_z),
+    .s3_offset_x (cal_s3_offset_x), .s3_offset_y (cal_s3_offset_y),
+    .s3_offset_z (cal_s3_offset_z),
+    .s4_offset_x (cal_s4_offset_x), .s4_offset_y (cal_s4_offset_y),
+    .s4_offset_z (cal_s4_offset_z),
+
+    .s1_scale_x_q16 (cal_s1_scale_x_q16), .s1_scale_y_q16 (cal_s1_scale_y_q16),
+    .s1_scale_z_q16 (cal_s1_scale_z_q16),
+    .s2_scale_x_q16 (cal_s2_scale_x_q16), .s2_scale_y_q16 (cal_s2_scale_y_q16),
+    .s2_scale_z_q16 (cal_s2_scale_z_q16),
+    .s3_scale_x_q16 (cal_s3_scale_x_q16), .s3_scale_y_q16 (cal_s3_scale_y_q16),
+    .s3_scale_z_q16 (cal_s3_scale_z_q16),
+    .s4_scale_x_q16 (cal_s4_scale_x_q16), .s4_scale_y_q16 (cal_s4_scale_y_q16),
+    .s4_scale_z_q16 (cal_s4_scale_z_q16)
+);
+
+mag_calibrator u_calibrator_1 (
+    .raw_x (mag1_x), .raw_y (mag1_y), .raw_z (mag1_z),
+    .offset_x (cal_s1_offset_x), .offset_y (cal_s1_offset_y), .offset_z (cal_s1_offset_z),
+    .scale_x_q16 (cal_s1_scale_x_q16), .scale_y_q16 (cal_s1_scale_y_q16),
+    .scale_z_q16 (cal_s1_scale_z_q16),
+    .corrected_x (cal_mag1_x), .corrected_y (cal_mag1_y), .corrected_z (cal_mag1_z),
+    .corrected_x_gauss_q16 (cal_mag1_x_gauss_q16),
+    .corrected_y_gauss_q16 (cal_mag1_y_gauss_q16),
+    .corrected_z_gauss_q16 (cal_mag1_z_gauss_q16)
+);
+
+mag_calibrator u_calibrator_2 (
+    .raw_x (mag2_x), .raw_y (mag2_y), .raw_z (mag2_z),
+    .offset_x (cal_s2_offset_x), .offset_y (cal_s2_offset_y), .offset_z (cal_s2_offset_z),
+    .scale_x_q16 (cal_s2_scale_x_q16), .scale_y_q16 (cal_s2_scale_y_q16),
+    .scale_z_q16 (cal_s2_scale_z_q16),
+    .corrected_x (cal_mag2_x), .corrected_y (cal_mag2_y), .corrected_z (cal_mag2_z),
+    .corrected_x_gauss_q16 (cal_mag2_x_gauss_q16),
+    .corrected_y_gauss_q16 (cal_mag2_y_gauss_q16),
+    .corrected_z_gauss_q16 (cal_mag2_z_gauss_q16)
+);
+
+mag_calibrator u_calibrator_3 (
+    .raw_x (mag3_x), .raw_y (mag3_y), .raw_z (mag3_z),
+    .offset_x (cal_s3_offset_x), .offset_y (cal_s3_offset_y), .offset_z (cal_s3_offset_z),
+    .scale_x_q16 (cal_s3_scale_x_q16), .scale_y_q16 (cal_s3_scale_y_q16),
+    .scale_z_q16 (cal_s3_scale_z_q16),
+    .corrected_x (cal_mag3_x), .corrected_y (cal_mag3_y), .corrected_z (cal_mag3_z),
+    .corrected_x_gauss_q16 (cal_mag3_x_gauss_q16),
+    .corrected_y_gauss_q16 (cal_mag3_y_gauss_q16),
+    .corrected_z_gauss_q16 (cal_mag3_z_gauss_q16)
+);
+
+mag_calibrator u_calibrator_4 (
+    .raw_x (mag4_x), .raw_y (mag4_y), .raw_z (mag4_z),
+    .offset_x (cal_s4_offset_x), .offset_y (cal_s4_offset_y), .offset_z (cal_s4_offset_z),
+    .scale_x_q16 (cal_s4_scale_x_q16), .scale_y_q16 (cal_s4_scale_y_q16),
+    .scale_z_q16 (cal_s4_scale_z_q16),
+    .corrected_x (cal_mag4_x), .corrected_y (cal_mag4_y), .corrected_z (cal_mag4_z),
+    .corrected_x_gauss_q16 (cal_mag4_x_gauss_q16),
+    .corrected_y_gauss_q16 (cal_mag4_y_gauss_q16),
+    .corrected_z_gauss_q16 (cal_mag4_z_gauss_q16)
+);
+
+// =====================================================================
 // QMC5883P bring-up interface
 // =====================================================================
-// SW[3:2]   = selected sensor: 00, 01, 10, 11 select sensors 1, 2, 3, 4.
-// SW[1:0]   = selected axis: 00, 01, 10 select X, Y, Z.
-// LEDG[0]   = all four sensors initialized successfully.
+// KEY[0]     = restart calibration collection.
+// KEY[1]     = finish collection and calculate coefficients.
+// SW[4]      = display calibrated values after calculation is complete.
+// SW[3:2]    = selected sensor: 00, 01, 10, 11 select sensors 1, 2, 3, 4.
+// SW[1:0]    = selected axis: 00, 01, 10 select X, Y, Z.
+// LEDG[0]    = all four sensors initialized successfully.
+// LEDG[3:1]  = calibration collecting, calculating, done.
 // LEDR[17:0] = absolute selected-axis field strength relative to configured range.
-logic [15:0] selected_mag_x, selected_mag_y, selected_mag_z;
-logic signed [31:0] selected_mag_x_gauss_q16;
-logic signed [31:0] selected_mag_y_gauss_q16;
-logic signed [31:0] selected_mag_z_gauss_q16;
+logic signed [15:0] selected_mag_x, selected_mag_y, selected_mag_z;
+logic signed [15:0] selected_cal_mag_x, selected_cal_mag_y, selected_cal_mag_z;
 logic [7:0]  selected_dbg_chip_id;
 
 always_comb begin
@@ -313,68 +432,59 @@ always_comb begin
             selected_mag_x                 = mag1_x;
             selected_mag_y                 = mag1_y;
             selected_mag_z                 = mag1_z;
-            selected_mag_x_gauss_q16       = mag1_x_gauss_q16;
-            selected_mag_y_gauss_q16       = mag1_y_gauss_q16;
-            selected_mag_z_gauss_q16       = mag1_z_gauss_q16;
+            selected_cal_mag_x             = cal_mag1_x;
+            selected_cal_mag_y             = cal_mag1_y;
+            selected_cal_mag_z             = cal_mag1_z;
             selected_dbg_chip_id           = qmc_dbg_chip_id[0];
         end
         2'b01: begin
             selected_mag_x                 = mag2_x;
             selected_mag_y                 = mag2_y;
             selected_mag_z                 = mag2_z;
-            selected_mag_x_gauss_q16       = mag2_x_gauss_q16;
-            selected_mag_y_gauss_q16       = mag2_y_gauss_q16;
-            selected_mag_z_gauss_q16       = mag2_z_gauss_q16;
+            selected_cal_mag_x             = cal_mag2_x;
+            selected_cal_mag_y             = cal_mag2_y;
+            selected_cal_mag_z             = cal_mag2_z;
             selected_dbg_chip_id           = qmc_dbg_chip_id[1];
         end
         2'b10: begin
             selected_mag_x                 = mag3_x;
             selected_mag_y                 = mag3_y;
             selected_mag_z                 = mag3_z;
-            selected_mag_x_gauss_q16       = mag3_x_gauss_q16;
-            selected_mag_y_gauss_q16       = mag3_y_gauss_q16;
-            selected_mag_z_gauss_q16       = mag3_z_gauss_q16;
+            selected_cal_mag_x             = cal_mag3_x;
+            selected_cal_mag_y             = cal_mag3_y;
+            selected_cal_mag_z             = cal_mag3_z;
             selected_dbg_chip_id           = qmc_dbg_chip_id[2];
         end
         default: begin
             selected_mag_x                 = mag4_x;
             selected_mag_y                 = mag4_y;
             selected_mag_z                 = mag4_z;
-            selected_mag_x_gauss_q16       = mag4_x_gauss_q16;
-            selected_mag_y_gauss_q16       = mag4_y_gauss_q16;
-            selected_mag_z_gauss_q16       = mag4_z_gauss_q16;
+            selected_cal_mag_x             = cal_mag4_x;
+            selected_cal_mag_y             = cal_mag4_y;
+            selected_cal_mag_z             = cal_mag4_z;
             selected_dbg_chip_id           = qmc_dbg_chip_id[3];
         end
     endcase
 end
 
 assign LEDG[0]   = &qmc_dbg_init_done;
-assign LEDG[8:1] = 8'd0;
+assign LEDG[1]   = calibration_collecting;
+assign LEDG[2]   = calibration_calculating;
+assign LEDG[3]   = calibration_done;
+assign LEDG[8:4] = 5'd0;
 
 // =====================================================================
 // 觀察與驗證機制：SW[3:2] 選擇感測器，SW[1:0] 選擇 X, Y, Z 軸
 // =====================================================================
-logic [15:0] display_mag_data;
-logic signed [31:0] display_mag_gauss_q16;
+wire use_calibrated_display = SW[4] && calibration_done;
+logic signed [15:0] display_mag_data;
 
 always_comb begin
     case (SW[1:0])
-        2'b00: begin
-            display_mag_data      = selected_mag_x;
-            display_mag_gauss_q16 = selected_mag_x_gauss_q16;
-        end
-        2'b01: begin
-            display_mag_data      = selected_mag_y;
-            display_mag_gauss_q16 = selected_mag_y_gauss_q16;
-        end
-        2'b10: begin
-            display_mag_data      = selected_mag_z;
-            display_mag_gauss_q16 = selected_mag_z_gauss_q16;
-        end
-        default: begin
-            display_mag_data      = selected_mag_x;
-            display_mag_gauss_q16 = selected_mag_x_gauss_q16;
-        end
+        2'b00:   display_mag_data = use_calibrated_display ? selected_cal_mag_x : selected_mag_x;
+        2'b01:   display_mag_data = use_calibrated_display ? selected_cal_mag_y : selected_mag_y;
+        2'b10:   display_mag_data = use_calibrated_display ? selected_cal_mag_z : selected_mag_z;
+        default: display_mag_data = use_calibrated_display ? selected_cal_mag_x : selected_mag_x;
     endcase
 end
 
@@ -448,6 +558,9 @@ endfunction
 wire [127:0] lcd_line1;
 wire [127:0] lcd_line2;
 wire [31:0]  chip_id_ascii;
+wire [15:0]  lcd_mag_x = use_calibrated_display ? selected_cal_mag_x : selected_mag_x;
+wire [15:0]  lcd_mag_y = use_calibrated_display ? selected_cal_mag_y : selected_mag_y;
+wire [15:0]  lcd_mag_z = use_calibrated_display ? selected_cal_mag_z : selected_mag_z;
 
 assign chip_id_ascii = word_to_hex_ascii({8'h00, selected_dbg_chip_id});
 
@@ -455,9 +568,9 @@ assign chip_id_ascii = word_to_hex_ascii({8'h00, selected_dbg_chip_id});
 // "X=1234 Y=5678   "
 assign lcd_line1 = {
     "X=",
-    word_to_hex_ascii(selected_mag_x),
+    word_to_hex_ascii(lcd_mag_x),
     " Y=",
-    word_to_hex_ascii(selected_mag_y),
+    word_to_hex_ascii(lcd_mag_y),
     "   "
 };
 
@@ -465,7 +578,7 @@ assign lcd_line1 = {
 // "Z=1234 ID=80  "
 assign lcd_line2 = {
     "Z=",
-    word_to_hex_ascii(selected_mag_z),
+    word_to_hex_ascii(lcd_mag_z),
     " ID=",
     chip_id_ascii[15:0],
     "  "
