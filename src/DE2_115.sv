@@ -194,6 +194,8 @@ wire [15:0] mag2_x, mag2_y, mag2_z;
 wire [15:0] mag3_x, mag3_y, mag3_z;
 wire [15:0] mag4_x, mag4_y, mag4_z;
 wire [3:0]  qmc_sample_valid;
+// Keep all four sensor paths instantiated. Change to 4'b1111 for final use.
+localparam [3:0] ACTIVE_SENSOR_MASK = 4'b0001;
 wire [4:0]  qmc_dbg_state [0:3];
 wire [3:0]  qmc_dbg_err;
 wire [7:0]  qmc_dbg_chip_id [0:3];
@@ -337,6 +339,7 @@ mag_calibration_manager u_calibration_manager (
     .rst_n              (key3down),
     .start_calibration  (calibration_start_pulse),
     .finish_calibration (calibration_finish_pulse),
+    .active_sensor_mask (ACTIVE_SENSOR_MASK),
     .sample_valid       (qmc_sample_valid),
 
     .s1_x (mag1_x), .s1_y (mag1_y), .s1_z (mag1_z),
@@ -419,7 +422,7 @@ mag_calibrator u_calibrator_4 (
 // SW[4]      = display calibrated values after calculation is complete.
 // SW[3:2]    = selected sensor: 00, 01, 10, 11 select sensors 1, 2, 3, 4.
 // SW[1:0]    = selected axis: 00, 01, 10 select X, Y, Z.
-// LEDG[0]    = all four sensors initialized successfully.
+// LEDG[0]    = all active sensors initialized successfully.
 // LEDG[3:1]  = calibration collecting, calculating, done.
 // LEDR[17:0] = absolute selected-axis field strength relative to configured range.
 logic signed [15:0] selected_mag_x, selected_mag_y, selected_mag_z;
@@ -467,7 +470,8 @@ always_comb begin
     endcase
 end
 
-assign LEDG[0]   = &qmc_dbg_init_done;
+assign LEDG[0]   = ((qmc_dbg_init_done & ACTIVE_SENSOR_MASK) ==
+                    ACTIVE_SENSOR_MASK);
 assign LEDG[1]   = calibration_collecting;
 assign LEDG[2]   = calibration_calculating;
 assign LEDG[3]   = calibration_done;

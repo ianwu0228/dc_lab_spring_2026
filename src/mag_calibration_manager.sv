@@ -3,6 +3,7 @@ module mag_calibration_manager (
     input  wire               rst_n,
     input  wire               start_calibration,
     input  wire               finish_calibration,
+    input  wire [3:0]         active_sensor_mask,
     input  wire [3:0]         sample_valid,
 
     input  wire signed [15:0] s1_x,
@@ -74,7 +75,15 @@ module mag_calibration_manager (
     reg        [31:0] scale_value_q16 [0:11];
 
     wire signed [15:0] raw_value [0:11];
+    wire [11:0] axis_active;
     wire [11:0] axis_sample_valid;
+    wire [2:0] active_sensor_count =
+        {2'd0, active_sensor_mask[0]} +
+        {2'd0, active_sensor_mask[1]} +
+        {2'd0, active_sensor_mask[2]} +
+        {2'd0, active_sensor_mask[3]};
+    wire [4:0] active_axis_count =
+        {2'd0, active_sensor_count} + {active_sensor_count, 1'b0};
 
     assign raw_value[0]  = s1_x;
     assign raw_value[1]  = s1_y;
@@ -89,7 +98,14 @@ module mag_calibration_manager (
     assign raw_value[10] = s4_y;
     assign raw_value[11] = s4_z;
 
-    assign axis_sample_valid = {
+    assign axis_active = {
+        {3{active_sensor_mask[3]}},
+        {3{active_sensor_mask[2]}},
+        {3{active_sensor_mask[1]}},
+        {3{active_sensor_mask[0]}}
+    };
+
+    assign axis_sample_valid = axis_active & {
         {3{sample_valid[3]}},
         {3{sample_valid[2]}},
         {3{sample_valid[1]}},
@@ -167,7 +183,8 @@ module mag_calibration_manager (
                     end
 
                     S_COLLECT: begin
-                        sensors_seen <= sensors_seen | sample_valid;
+                        sensors_seen <= sensors_seen |
+                                        (sample_valid & active_sensor_mask);
 
                         for (i = 0; i < 12; i = i + 1) begin
                             if (axis_sample_valid[i]) begin
@@ -178,7 +195,10 @@ module mag_calibration_manager (
                             end
                         end
 
-                        if (finish_calibration && (sensors_seen == 4'b1111)) begin
+                        if (finish_calibration &&
+                            (active_sensor_mask != 4'b0000) &&
+                            ((sensors_seen & active_sensor_mask) ==
+                             active_sensor_mask)) begin
                             axis_index <= 4'd0;
                             radius_sum <= 20'd0;
                             state <= S_PREPARE;
@@ -186,9 +206,14 @@ module mag_calibration_manager (
                     end
 
                     S_PREPARE: begin
-                        offset_value[axis_index] <= current_extrema_sum >>> 1;
-                        radius_value[axis_index] <= current_radius;
-                        radius_sum <= radius_sum + current_radius;
+                        if (axis_active[axis_index]) begin
+                            offset_value[axis_index] <= current_extrema_sum >>> 1;
+                            radius_value[axis_index] <= current_radius;
+                            radius_sum <= radius_sum + current_radius;
+                        end else begin
+                            offset_value[axis_index] <= 16'sd0;
+                            radius_value[axis_index] <= 16'd0;
+                        end
 
                         if (axis_index == 4'd11) begin
                             state <= S_MEAN_START;
@@ -199,7 +224,7 @@ module mag_calibration_manager (
 
                     S_MEAN_START: begin
                         divider_numerator <= {28'd0, radius_sum};
-                        divider_denominator <= 32'd12;
+                        divider_denominator <= {27'd0, active_axis_count};
                         divider_start <= 1'b1;
                         state <= S_MEAN_WAIT;
                     end
