@@ -39,14 +39,16 @@ module vga_four_sensor_dashboard (
     output wire               graph_plot_s4_pixel_on
 );
 
-    localparam [9:0] S1_X = 10'd320;
-    localparam [9:0] S1_Y = 10'd360;
-    localparam [9:0] S2_X = 10'd200;
-    localparam [9:0] S2_Y = 10'd280;
-    localparam [9:0] S3_X = 10'd440;
-    localparam [9:0] S3_Y = 10'd280;
-    localparam [9:0] S4_X = 10'd320;
-    localparam [9:0] S4_Y = 10'd160;
+    localparam [9:0] CENTER_X = 10'd320;
+    localparam [9:0] CENTER_Y = 10'd320;
+    localparam [9:0] S1_X = 10'd260;
+    localparam [9:0] S1_Y = 10'd380;
+    localparam [9:0] S2_X = 10'd380;
+    localparam [9:0] S2_Y = 10'd380;
+    localparam [9:0] S3_X = 10'd260;
+    localparam [9:0] S3_Y = 10'd260;
+    localparam [9:0] S4_X = 10'd380;
+    localparam [9:0] S4_Y = 10'd260;
 
     reg signed [15:0] snapshot_source_x_q10;
     reg signed [15:0] snapshot_source_y_q10;
@@ -103,7 +105,7 @@ module vga_four_sensor_dashboard (
         input signed [15:0] x_q10;
         reg signed [26:0] x_value;
         begin
-            x_value = $signed({1'b0, S1_X}) +
+            x_value = $signed({1'b0, CENTER_X}) +
                       ((x_q10 * 8'sd120) >>> 10);
             if (x_value < 0)
                 project_x = 10'd0;
@@ -119,9 +121,9 @@ module vga_four_sensor_dashboard (
         input signed [15:0] z_q10;
         reg signed [26:0] y_value;
         begin
-            y_value = $signed({1'b0, S1_Y}) -
-                      ((y_q10 * 8'sd80) >>> 10) -
-                      ((z_q10 * 8'sd200) >>> 10);
+            y_value = $signed({1'b0, CENTER_Y}) -
+                      ((y_q10 * 8'sd120) >>> 10) -
+                      ((z_q10 * 8'sd80) >>> 10);
             if (y_value < 0)
                 project_y = 10'd0;
             else if (y_value > 27'sd479)
@@ -265,8 +267,8 @@ module vga_four_sensor_dashboard (
                 " Z=", q10_to_ascii(snapshot_source_z_q10),
                 {14{" "}}
             };
-            5'd7: line_text = {"S1(0,0,0) S2(-1,1,0) S3(1,1,0)", {2{" "}}};
-            5'd8: line_text = {"S4(0,0,1)", {31{" "}}};
+            5'd7: line_text = {"24MM SQUARE SENSOR PLANE", {16{" "}}};
+            5'd8: line_text = {"UNIT 1.000 = 24MM", {23{" "}}};
             5'd28: line_text = {"BLUE SENSOR  RED SOURCE  YELLOW SHADOW", {2{" "}}};
             default: line_text = {40{" "}};
         endcase
@@ -333,19 +335,22 @@ module vga_four_sensor_dashboard (
         endcase
     end
 
-    wire top_s1_s2 = line_near(S1_X, S1_Y, S2_X, S2_Y);
-    wire top_s1_s3 = line_near(S1_X, S1_Y, S3_X, S3_Y);
-    wire top_s2_s3 = line_near(S2_X, S2_Y, S3_X, S3_Y);
-    wire side_s1_s4 = line_near(S1_X, S1_Y, S4_X, S4_Y);
-    wire side_s2_s4 = line_near(S2_X, S2_Y, S4_X, S4_Y);
-    wire side_s3_s4 = line_near(S3_X, S3_Y, S4_X, S4_Y);
+    wire square_s1_s2 = line_near(S1_X, S1_Y, S2_X, S2_Y);
+    wire square_s1_s3 = line_near(S1_X, S1_Y, S3_X, S3_Y);
+    wire square_s2_s4 = line_near(S2_X, S2_Y, S4_X, S4_Y);
+    wire square_s3_s4 = line_near(S3_X, S3_Y, S4_X, S4_Y);
+    wire source_height_line = snapshot_source_valid &&
+                              line_near(source_screen_x,
+                                        source_screen_y,
+                                        shadow_screen_x,
+                                        shadow_screen_y);
 
     assign text_pixel_on = active_video &&
                            font_pixels[3'd7 - glyph_column];
     assign graph_axis_pixel_on = active_video &&
-                                 (top_s1_s2 || top_s1_s3 ||
-                                  top_s2_s3 || side_s1_s4 ||
-                                  side_s2_s4 || side_s3_s4);
+                                 (square_s1_s2 || square_s1_s3 ||
+                                  square_s2_s4 || square_s3_s4 ||
+                                  source_height_line);
     assign graph_plot_s1_pixel_on = 1'b0;
     assign graph_plot_s2_pixel_on = active_video && snapshot_source_valid &&
                                     point_near(source_screen_x,
