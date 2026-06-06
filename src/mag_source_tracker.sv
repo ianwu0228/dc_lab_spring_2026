@@ -25,37 +25,60 @@ module mag_source_tracker (
     output reg         source_valid
 );
 
-    // Permanent-magnet DC visualization tracker.
+    // Fixed-orientation Finexus tracker for a passive DC magnet.
     //
-    // KEY[2] captures the background DC magnetic vector with no magnet nearby.
-    // Runtime strength is |H_now - H_background|^2 for each sensor.
+    // KEY[2] captures the background vector with no magnet nearby. Runtime
+    // strengths are computed as |H_now - H_background|^2.
     //
-    // For a passive magnet, a physically exact solve needs a nonlinear dipole
-    // fit over position and magnetic moment. This module instead computes a
-    // stable relative position for VGA display:
-    //   X/Y: baseline-subtracted strength balance over the 24 mm square.
-    //   Z:   heuristic from how concentrated the strongest sensor is.
+    // Assumption: the magnet's magnetic moment axis is fixed perpendicular to
+    // the sensor plane, so cos(theta)=z/r. Finexus Eq. 4 becomes:
+    //
+    //   |H_i|^2 = K * (r_i^2 + 3z^2) / (r_i^2)^4
+    //
+    // K is unknown but common to all sensors. The FPGA searches candidate
+    // positions and picks the one where all four sensors imply the most
+    // consistent K value.
+    //
+    // Sensor layout is a 24 mm square on z=0:
+    //   S3(-12,+12,0)        S4(+12,+12,0)
+    //
+    //   S1(-12,-12,0)        S2(+12,-12,0)
     //
     // Output Q10 units:
     //   1024 = one sensor side length = 24 mm.
 
+    localparam signed [15:0] SENSOR_SIDE_MM = 16'sd24;
+    localparam signed [15:0] SENSOR_HALF_MM = 16'sd12;
+    localparam signed [15:0] S1_X_MM = -SENSOR_HALF_MM;
+    localparam signed [15:0] S1_Y_MM = -SENSOR_HALF_MM;
+    localparam signed [15:0] S2_X_MM =  SENSOR_HALF_MM;
+    localparam signed [15:0] S2_Y_MM = -SENSOR_HALF_MM;
+    localparam signed [15:0] S3_X_MM = -SENSOR_HALF_MM;
+    localparam signed [15:0] S3_Y_MM =  SENSOR_HALF_MM;
+    localparam signed [15:0] S4_X_MM =  SENSOR_HALF_MM;
+    localparam signed [15:0] S4_Y_MM =  SENSOR_HALF_MM;
+
+    localparam signed [15:0] X_MIN_MM = -16'sd48;
+    localparam signed [15:0] X_MAX_MM =  16'sd48;
+    localparam signed [15:0] Y_MIN_MM = -16'sd48;
+    localparam signed [15:0] Y_MAX_MM =  16'sd48;
+    localparam signed [15:0] Z_MIN_MM =   16'sd4;
+    localparam signed [15:0] Z_MAX_MM =  16'sd120;
+    localparam signed [15:0] COARSE_STEP_MM = 16'sd4;
+    localparam signed [15:0] REFINE_STEP_MM = 16'sd1;
+    localparam signed [15:0] REFINE_RADIUS_MM = 16'sd4;
+
     localparam [31:0] MIN_TOTAL_SIGNAL = 32'd4_000;
     localparam [2:0]  STRENGTH_FILTER_SHIFT = 3'd4;
-    localparam [2:0]  POSITION_FILTER_SHIFT = 3'd4;
-    localparam [11:0] XY_BALANCE_GAIN_Q10 = 12'd1024;
-    localparam [11:0] MAX_RATIO_SCALE_Q10 = 12'd4096;
-    localparam signed [15:0] Z_HIGH_Q10 = 16'sd2560; // 2.5 units
-    localparam signed [15:0] Z_LOW_Q10  = 16'sd512;  // 0.5 units
+    localparam [2:0]  POSITION_FILTER_SHIFT = 3'd3;
+    localparam integer R8_SHIFT = 32;
 
     localparam [3:0]
-        S_IDLE    = 4'd0,
-        S_X_START = 4'd1,
-        S_X_WAIT  = 4'd2,
-        S_Y_START = 4'd3,
-        S_Y_WAIT  = 4'd4,
-        S_Z_START = 4'd5,
-        S_Z_WAIT  = 4'd6,
-        S_OUTPUT  = 4'd7;
+        S_IDLE        = 4'd0,
+        S_COARSE_EVAL = 4'd1,
+        S_REFINE_INIT = 4'd2,
+        S_REFINE_EVAL = 4'd3,
+        S_OUTPUT      = 4'd4;
 
     reg [3:0] state;
 
@@ -66,19 +89,21 @@ module mag_source_tracker (
 
     reg [31:0] filtered_s1, filtered_s2, filtered_s3, filtered_s4;
     reg [31:0] solve_s1, solve_s2, solve_s3, solve_s4;
-    reg [31:0] solve_total;
-    reg [31:0] solve_max;
-    reg        balance_sign;
-    reg signed [15:0] next_x_q10;
-    reg signed [15:0] next_y_q10;
-    reg signed [15:0] next_z_q10;
+    reg [1:0]  reference_sensor;
 
-    reg         divider_start;
-    reg  [47:0] divider_numerator;
-    reg  [31:0] divider_denominator;
-    wire        divider_busy;
-    wire        divider_done;
-    wire [47:0] divider_quotient;
+    reg signed [15:0] candidate_x_mm;
+    reg signed [15:0] candidate_y_mm;
+    reg signed [15:0] candidate_z_mm;
+    reg signed [15:0] best_x_mm;
+    reg signed [15:0] best_y_mm;
+    reg signed [15:0] best_z_mm;
+    reg signed [15:0] refine_x_min_mm;
+    reg signed [15:0] refine_x_max_mm;
+    reg signed [15:0] refine_y_min_mm;
+    reg signed [15:0] refine_y_max_mm;
+    reg signed [15:0] refine_z_min_mm;
+    reg signed [15:0] refine_z_max_mm;
+    reg [95:0] best_score;
 
     wire [31:0] signal_s1 = vector_delta_square(
         sensor1_x, sensor1_y, sensor1_z, bg1_x, bg1_y, bg1_z);
@@ -104,44 +129,34 @@ module mag_source_tracker (
         (next_total_wide[33:32] != 2'd0) ? 32'hFFFFFFFF :
         next_total_wide[31:0];
 
-    wire [31:0] next_max_12 = (next_s1 >= next_s2) ? next_s1 : next_s2;
-    wire [31:0] next_max_34 = (next_s3 >= next_s4) ? next_s3 : next_s4;
-    wire [31:0] next_max = (next_max_12 >= next_max_34) ?
-                            next_max_12 : next_max_34;
+    wire [1:0] strongest_sensor =
+        (next_s1 >= next_s2 &&
+         next_s1 >= next_s3 &&
+         next_s1 >= next_s4) ? 2'd0 :
+        (next_s2 >= next_s3 &&
+         next_s2 >= next_s4) ? 2'd1 :
+        (next_s3 >= next_s4) ? 2'd2 : 2'd3;
 
-    wire [33:0] solve_left_wide   = {2'd0, solve_s1} + {2'd0, solve_s3};
-    wire [33:0] solve_right_wide  = {2'd0, solve_s2} + {2'd0, solve_s4};
-    wire [33:0] solve_bottom_wide = {2'd0, solve_s1} + {2'd0, solve_s2};
-    wire [33:0] solve_top_wide    = {2'd0, solve_s3} + {2'd0, solve_s4};
-
-    wire [31:0] solve_left =
-        (solve_left_wide[33:32] != 2'd0) ? 32'hFFFFFFFF :
-        solve_left_wide[31:0];
-    wire [31:0] solve_right =
-        (solve_right_wide[33:32] != 2'd0) ? 32'hFFFFFFFF :
-        solve_right_wide[31:0];
-    wire [31:0] solve_bottom =
-        (solve_bottom_wide[33:32] != 2'd0) ? 32'hFFFFFFFF :
-        solve_bottom_wide[31:0];
-    wire [31:0] solve_top =
-        (solve_top_wide[33:32] != 2'd0) ? 32'hFFFFFFFF :
-        solve_top_wide[31:0];
-
-    wire signed [32:0] x_balance =
-        $signed({1'b0, solve_right}) - $signed({1'b0, solve_left});
-    wire signed [32:0] y_balance =
-        $signed({1'b0, solve_top}) - $signed({1'b0, solve_bottom});
-
-    unsigned_divider u_tracker_divider (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .start       (divider_start),
-        .numerator   (divider_numerator),
-        .denominator (divider_denominator),
-        .busy        (divider_busy),
-        .done        (divider_done),
-        .quotient    (divider_quotient)
+    wire [95:0] candidate_score_value = candidate_score(
+        candidate_x_mm,
+        candidate_y_mm,
+        candidate_z_mm,
+        solve_s1,
+        solve_s2,
+        solve_s3,
+        solve_s4,
+        reference_sensor
     );
+
+    wire coarse_last =
+        (candidate_x_mm >= X_MAX_MM) &&
+        (candidate_y_mm >= Y_MAX_MM) &&
+        (candidate_z_mm >= Z_MAX_MM);
+
+    wire refine_last =
+        (candidate_x_mm >= refine_x_max_mm) &&
+        (candidate_y_mm >= refine_y_max_mm) &&
+        (candidate_z_mm >= refine_z_max_mm);
 
     function automatic [31:0] square_signed_18;
         input signed [17:0] value;
@@ -200,28 +215,165 @@ module mag_source_tracker (
         end
     endfunction
 
-    function automatic [47:0] scaled_abs_balance;
-        input signed [32:0] balance;
-        reg [32:0] magnitude;
-        reg [47:0] magnitude_48;
+    function automatic [31:0] square_signed_16;
+        input signed [15:0] value;
+        reg [15:0] magnitude;
+        reg [31:0] magnitude_32;
         begin
-            magnitude = balance[32] ? ((~balance) + 1'b1) : balance;
-            magnitude_48 = {15'd0, magnitude};
-            scaled_abs_balance = magnitude_48 * {36'd0, XY_BALANCE_GAIN_Q10};
+            magnitude = value[15] ? ((~value) + 1'b1) : value;
+            magnitude_32 = {16'd0, magnitude};
+            square_signed_16 = magnitude_32 * magnitude_32;
         end
     endfunction
 
-    function automatic signed [15:0] signed_q10_from_quotient;
-        input        sign_value;
-        input [47:0] quotient;
-        reg signed [15:0] magnitude;
+    function automatic [31:0] r8_scaled;
+        input [31:0] r2;
+        reg [63:0] r4;
+        reg [127:0] r8;
+        reg [127:0] shifted;
         begin
-            if (quotient[47:15] != 33'd0)
-                magnitude = 16'sh7FFF;
-            else
-                magnitude = {1'b0, quotient[14:0]};
+            r4 = {32'd0, r2} * {32'd0, r2};
+            r8 = {64'd0, r4} * {64'd0, r4};
+            shifted = r8 >> R8_SHIFT;
 
-            signed_q10_from_quotient = sign_value ? -magnitude : magnitude;
+            if (shifted == 128'd0)
+                r8_scaled = 32'd1;
+            else if (shifted[127:32] != 96'd0)
+                r8_scaled = 32'hFFFFFFFF;
+            else
+                r8_scaled = shifted[31:0];
+        end
+    endfunction
+
+    function automatic [95:0] pair_score;
+        input [31:0] h2_ref;
+        input [31:0] h2_other;
+        input [31:0] a_ref;
+        input [31:0] a_other;
+        input [31:0] r8_ref;
+        input [31:0] r8_other;
+        reg [63:0] left_intermediate;
+        reg [63:0] right_intermediate;
+        reg [95:0] left_product;
+        reg [95:0] right_product;
+        begin
+            // H^2 = K * A / R8, where:
+            //   A  = r^2 + 3z^2
+            //   R8 = (r^2)^4
+            // Compare K estimates without division:
+            //   Href^2 * R8ref * Aother ~= Hother^2 * R8other * Aref
+            left_intermediate = {32'd0, h2_ref} * {32'd0, r8_ref};
+            right_intermediate = {32'd0, h2_other} * {32'd0, r8_other};
+            left_product = {32'd0, left_intermediate} * {64'd0, a_other};
+            right_product = {32'd0, right_intermediate} * {64'd0, a_ref};
+
+            pair_score = (left_product >= right_product) ?
+                         (left_product - right_product) :
+                         (right_product - left_product);
+        end
+    endfunction
+
+    function automatic [95:0] add3_score;
+        input [95:0] a;
+        input [95:0] b;
+        input [95:0] c;
+        reg [98:0] sum;
+        begin
+            sum = {3'd0, a} + {3'd0, b} + {3'd0, c};
+            if (sum[98:96] != 3'd0)
+                add3_score = {96{1'b1}};
+            else
+                add3_score = sum[95:0];
+        end
+    endfunction
+
+    function automatic [95:0] candidate_score;
+        input signed [15:0] x_mm;
+        input signed [15:0] y_mm;
+        input signed [15:0] z_mm;
+        input [31:0] m1;
+        input [31:0] m2;
+        input [31:0] m3;
+        input [31:0] m4;
+        input [1:0]  ref_sel;
+        reg signed [15:0] dx1, dy1, dx2, dy2, dx3, dy3, dx4, dy4;
+        reg [31:0] z2;
+        reg [31:0] r2_1, r2_2, r2_3, r2_4;
+        reg [31:0] a1, a2, a3, a4;
+        reg [31:0] r8_1, r8_2, r8_3, r8_4;
+        begin
+            dx1 = x_mm - S1_X_MM;
+            dy1 = y_mm - S1_Y_MM;
+            dx2 = x_mm - S2_X_MM;
+            dy2 = y_mm - S2_Y_MM;
+            dx3 = x_mm - S3_X_MM;
+            dy3 = y_mm - S3_Y_MM;
+            dx4 = x_mm - S4_X_MM;
+            dy4 = y_mm - S4_Y_MM;
+
+            z2 = square_signed_16(z_mm);
+            r2_1 = square_signed_16(dx1) + square_signed_16(dy1) + z2;
+            r2_2 = square_signed_16(dx2) + square_signed_16(dy2) + z2;
+            r2_3 = square_signed_16(dx3) + square_signed_16(dy3) + z2;
+            r2_4 = square_signed_16(dx4) + square_signed_16(dy4) + z2;
+
+            a1 = r2_1 + (z2 * 32'd3);
+            a2 = r2_2 + (z2 * 32'd3);
+            a3 = r2_3 + (z2 * 32'd3);
+            a4 = r2_4 + (z2 * 32'd3);
+
+            r8_1 = r8_scaled(r2_1);
+            r8_2 = r8_scaled(r2_2);
+            r8_3 = r8_scaled(r2_3);
+            r8_4 = r8_scaled(r2_4);
+
+            case (ref_sel)
+                2'd0: candidate_score = add3_score(
+                    pair_score(m1, m2, a1, a2, r8_1, r8_2),
+                    pair_score(m1, m3, a1, a3, r8_1, r8_3),
+                    pair_score(m1, m4, a1, a4, r8_1, r8_4)
+                );
+                2'd1: candidate_score = add3_score(
+                    pair_score(m2, m1, a2, a1, r8_2, r8_1),
+                    pair_score(m2, m3, a2, a3, r8_2, r8_3),
+                    pair_score(m2, m4, a2, a4, r8_2, r8_4)
+                );
+                2'd2: candidate_score = add3_score(
+                    pair_score(m3, m1, a3, a1, r8_3, r8_1),
+                    pair_score(m3, m2, a3, a2, r8_3, r8_2),
+                    pair_score(m3, m4, a3, a4, r8_3, r8_4)
+                );
+                default: candidate_score = add3_score(
+                    pair_score(m4, m1, a4, a1, r8_4, r8_1),
+                    pair_score(m4, m2, a4, a2, r8_4, r8_2),
+                    pair_score(m4, m3, a4, a3, r8_4, r8_3)
+                );
+            endcase
+        end
+    endfunction
+
+    function automatic signed [15:0] max_signed_16;
+        input signed [15:0] a;
+        input signed [15:0] b;
+        begin
+            max_signed_16 = (a > b) ? a : b;
+        end
+    endfunction
+
+    function automatic signed [15:0] min_signed_16;
+        input signed [15:0] a;
+        input signed [15:0] b;
+        begin
+            min_signed_16 = (a < b) ? a : b;
+        end
+    endfunction
+
+    function automatic signed [15:0] mm_to_q10;
+        input signed [15:0] mm_value;
+        reg signed [31:0] scaled;
+        begin
+            scaled = mm_value * 32'sd1024;
+            mm_to_q10 = scaled / SENSOR_SIDE_MM;
         end
     endfunction
 
@@ -232,27 +384,6 @@ module mag_source_tracker (
         begin
             delta = {new_value[15], new_value} - {old_value[15], old_value};
             smooth_signed_q10 = old_value + (delta >>> POSITION_FILTER_SHIFT);
-        end
-    endfunction
-
-    function automatic signed [15:0] z_from_ratio;
-        input [47:0] ratio_q10;
-        reg signed [16:0] z_value;
-        begin
-            // ratio_q10 ~= strongest_sensor * 4096 / total.
-            // Equal strengths: ratio ~= 1024 -> high Z.
-            // One dominant sensor: ratio approaches 4096 -> lower Z.
-            if (ratio_q10 <= 48'd1024)
-                z_from_ratio = Z_HIGH_Q10;
-            else begin
-                z_value = Z_HIGH_Q10 -
-                          (($signed({1'b0, ratio_q10[15:0]}) -
-                            17'sd1024) >>> 1);
-                if (z_value < Z_LOW_Q10)
-                    z_from_ratio = Z_LOW_Q10;
-                else
-                    z_from_ratio = z_value[15:0];
-            end
         end
     endfunction
 
@@ -271,22 +402,25 @@ module mag_source_tracker (
             solve_s2 <= 32'd0;
             solve_s3 <= 32'd0;
             solve_s4 <= 32'd0;
-            solve_total <= 32'd1;
-            solve_max <= 32'd0;
-            balance_sign <= 1'b0;
-            next_x_q10 <= 16'sd0;
-            next_y_q10 <= 16'sd0;
-            next_z_q10 <= Z_HIGH_Q10;
+            reference_sensor <= 2'd0;
+            candidate_x_mm <= 16'sd0;
+            candidate_y_mm <= 16'sd0;
+            candidate_z_mm <= Z_MIN_MM;
+            best_x_mm <= 16'sd0;
+            best_y_mm <= 16'sd0;
+            best_z_mm <= Z_MIN_MM;
+            refine_x_min_mm <= 16'sd0;
+            refine_x_max_mm <= 16'sd0;
+            refine_y_min_mm <= 16'sd0;
+            refine_y_max_mm <= 16'sd0;
+            refine_z_min_mm <= Z_MIN_MM;
+            refine_z_max_mm <= Z_MIN_MM;
+            best_score <= {96{1'b1}};
             source_x_q10 <= 16'sd0;
             source_y_q10 <= 16'sd0;
             source_z_q10 <= 16'sd0;
             source_valid <= 1'b0;
-            divider_start <= 1'b0;
-            divider_numerator <= 48'd0;
-            divider_denominator <= 32'd1;
         end else begin
-            divider_start <= 1'b0;
-
             if (baseline_capture) begin
                 bg1_x <= sensor1_x; bg1_y <= sensor1_y; bg1_z <= sensor1_z;
                 bg2_x <= sensor2_x; bg2_y <= sensor2_y; bg2_z <= sensor2_z;
@@ -312,78 +446,87 @@ module mag_source_tracker (
                                 solve_s2 <= next_s2;
                                 solve_s3 <= next_s3;
                                 solve_s4 <= next_s4;
-                                solve_total <= next_total;
-                                solve_max <= next_max;
-                                state <= S_X_START;
+                                reference_sensor <= strongest_sensor;
+                                candidate_x_mm <= X_MIN_MM;
+                                candidate_y_mm <= Y_MIN_MM;
+                                candidate_z_mm <= Z_MIN_MM;
+                                best_score <= {96{1'b1}};
+                                state <= S_COARSE_EVAL;
                             end else begin
                                 source_valid <= 1'b0;
                             end
                         end
                     end
 
-                    S_X_START: begin
-                        balance_sign <= x_balance[32];
-                        divider_numerator <= scaled_abs_balance(x_balance);
-                        divider_denominator <= (solve_total == 32'd0) ?
-                                               32'd1 : solve_total;
-                        divider_start <= 1'b1;
-                        state <= S_X_WAIT;
-                    end
+                    S_COARSE_EVAL: begin
+                        if (candidate_score_value < best_score) begin
+                            best_score <= candidate_score_value;
+                            best_x_mm <= candidate_x_mm;
+                            best_y_mm <= candidate_y_mm;
+                            best_z_mm <= candidate_z_mm;
+                        end
 
-                    S_X_WAIT: begin
-                        if (divider_done) begin
-                            next_x_q10 <= signed_q10_from_quotient(
-                                balance_sign,
-                                divider_quotient
-                            );
-                            state <= S_Y_START;
+                        if (coarse_last) begin
+                            state <= S_REFINE_INIT;
+                        end else if (candidate_z_mm < Z_MAX_MM) begin
+                            candidate_z_mm <= candidate_z_mm + COARSE_STEP_MM;
+                        end else begin
+                            candidate_z_mm <= Z_MIN_MM;
+                            if (candidate_y_mm < Y_MAX_MM) begin
+                                candidate_y_mm <= candidate_y_mm + COARSE_STEP_MM;
+                            end else begin
+                                candidate_y_mm <= Y_MIN_MM;
+                                candidate_x_mm <= candidate_x_mm + COARSE_STEP_MM;
+                            end
                         end
                     end
 
-                    S_Y_START: begin
-                        balance_sign <= y_balance[32];
-                        divider_numerator <= scaled_abs_balance(y_balance);
-                        divider_denominator <= (solve_total == 32'd0) ?
-                                               32'd1 : solve_total;
-                        divider_start <= 1'b1;
-                        state <= S_Y_WAIT;
+                    S_REFINE_INIT: begin
+                        refine_x_min_mm <= max_signed_16(best_x_mm - REFINE_RADIUS_MM, X_MIN_MM);
+                        refine_x_max_mm <= min_signed_16(best_x_mm + REFINE_RADIUS_MM, X_MAX_MM);
+                        refine_y_min_mm <= max_signed_16(best_y_mm - REFINE_RADIUS_MM, Y_MIN_MM);
+                        refine_y_max_mm <= min_signed_16(best_y_mm + REFINE_RADIUS_MM, Y_MAX_MM);
+                        refine_z_min_mm <= max_signed_16(best_z_mm - REFINE_RADIUS_MM, Z_MIN_MM);
+                        refine_z_max_mm <= min_signed_16(best_z_mm + REFINE_RADIUS_MM, Z_MAX_MM);
+                        candidate_x_mm <= max_signed_16(best_x_mm - REFINE_RADIUS_MM, X_MIN_MM);
+                        candidate_y_mm <= max_signed_16(best_y_mm - REFINE_RADIUS_MM, Y_MIN_MM);
+                        candidate_z_mm <= max_signed_16(best_z_mm - REFINE_RADIUS_MM, Z_MIN_MM);
+                        best_score <= {96{1'b1}};
+                        state <= S_REFINE_EVAL;
                     end
 
-                    S_Y_WAIT: begin
-                        if (divider_done) begin
-                            next_y_q10 <= signed_q10_from_quotient(
-                                balance_sign,
-                                divider_quotient
-                            );
-                            state <= S_Z_START;
+                    S_REFINE_EVAL: begin
+                        if (candidate_score_value < best_score) begin
+                            best_score <= candidate_score_value;
+                            best_x_mm <= candidate_x_mm;
+                            best_y_mm <= candidate_y_mm;
+                            best_z_mm <= candidate_z_mm;
                         end
-                    end
 
-                    S_Z_START: begin
-                        divider_numerator <= {16'd0, solve_max} *
-                                             {36'd0, MAX_RATIO_SCALE_Q10};
-                        divider_denominator <= (solve_total == 32'd0) ?
-                                               32'd1 : solve_total;
-                        divider_start <= 1'b1;
-                        state <= S_Z_WAIT;
-                    end
-
-                    S_Z_WAIT: begin
-                        if (divider_done) begin
-                            next_z_q10 <= z_from_ratio(divider_quotient);
+                        if (refine_last) begin
                             state <= S_OUTPUT;
+                        end else if (candidate_z_mm < refine_z_max_mm) begin
+                            candidate_z_mm <= candidate_z_mm + REFINE_STEP_MM;
+                        end else begin
+                            candidate_z_mm <= refine_z_min_mm;
+                            if (candidate_y_mm < refine_y_max_mm) begin
+                                candidate_y_mm <= candidate_y_mm + REFINE_STEP_MM;
+                            end else begin
+                                candidate_y_mm <= refine_y_min_mm;
+                                candidate_x_mm <= candidate_x_mm + REFINE_STEP_MM;
+                            end
                         end
                     end
 
                     S_OUTPUT: begin
                         if (source_valid) begin
-                            source_x_q10 <= smooth_signed_q10(source_x_q10, next_x_q10);
-                            source_y_q10 <= smooth_signed_q10(source_y_q10, next_y_q10);
-                            source_z_q10 <= smooth_signed_q10(source_z_q10, next_z_q10);
+                            source_x_q10 <= smooth_signed_q10(source_x_q10, mm_to_q10(best_x_mm));
+                            source_y_q10 <= smooth_signed_q10(source_y_q10, mm_to_q10(best_y_mm));
+                            source_z_q10 <= smooth_signed_q10(source_z_q10, mm_to_q10(best_z_mm));
                         end else begin
-                            source_x_q10 <= next_x_q10;
-                            source_y_q10 <= next_y_q10;
-                            source_z_q10 <= next_z_q10;
+                            source_x_q10 <= mm_to_q10(best_x_mm);
+                            source_y_q10 <= mm_to_q10(best_y_mm);
+                            source_z_q10 <= mm_to_q10(best_z_mm);
                         end
                         source_valid <= 1'b1;
                         state <= S_IDLE;
