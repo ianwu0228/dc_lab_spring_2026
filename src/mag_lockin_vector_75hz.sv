@@ -14,8 +14,9 @@ module mag_lockin_vector_75hz #(
     output reg                result_valid
 );
 
-    // A one-second coherent lock-in window at Fs=200 Hz.  The six I/Q
-    // accumulators extract only the 75 Hz component of the three field axes.
+    // Rolling coherent lock-in window. At Fs=200 Hz and WINDOW_SAMPLES=200,
+    // this still uses a one-second window, but after the first full window it
+    // updates once per new sample instead of waiting for a new batch.
     localparam [3:0]
         S_COLLECT = 4'd0,
         S_CALC_XI = 4'd1,
@@ -26,12 +27,22 @@ module mag_lockin_vector_75hz #(
         S_CALC_ZQ = 4'd6;
 
     reg [3:0] state;
+    reg [7:0] sample_index;
     reg [7:0] sample_count;
+    reg       window_full;
 
     reg signed [39:0] x_i_acc, x_q_acc;
     reg signed [39:0] y_i_acc, y_q_acc;
     reg signed [39:0] z_i_acc, z_q_acc;
     reg        [81:0] power_sum;
+    integer reset_index;
+
+    reg signed [31:0] x_i_window [0:WINDOW_SAMPLES-1];
+    reg signed [31:0] x_q_window [0:WINDOW_SAMPLES-1];
+    reg signed [31:0] y_i_window [0:WINDOW_SAMPLES-1];
+    reg signed [31:0] y_q_window [0:WINDOW_SAMPLES-1];
+    reg signed [31:0] z_i_window [0:WINDOW_SAMPLES-1];
+    reg signed [31:0] z_q_window [0:WINDOW_SAMPLES-1];
 
     wire signed [31:0] x_i_product = field_x_counts * cosine_q15;
     wire signed [31:0] x_q_product = field_x_counts * sine_q15;
@@ -41,17 +52,23 @@ module mag_lockin_vector_75hz #(
     wire signed [31:0] z_q_product = field_z_counts * sine_q15;
 
     wire signed [39:0] next_x_i =
-        x_i_acc + {{8{x_i_product[31]}}, x_i_product};
+        x_i_acc + {{8{x_i_product[31]}}, x_i_product} -
+        {{8{x_i_window[sample_index][31]}}, x_i_window[sample_index]};
     wire signed [39:0] next_x_q =
-        x_q_acc + {{8{x_q_product[31]}}, x_q_product};
+        x_q_acc + {{8{x_q_product[31]}}, x_q_product} -
+        {{8{x_q_window[sample_index][31]}}, x_q_window[sample_index]};
     wire signed [39:0] next_y_i =
-        y_i_acc + {{8{y_i_product[31]}}, y_i_product};
+        y_i_acc + {{8{y_i_product[31]}}, y_i_product} -
+        {{8{y_i_window[sample_index][31]}}, y_i_window[sample_index]};
     wire signed [39:0] next_y_q =
-        y_q_acc + {{8{y_q_product[31]}}, y_q_product};
+        y_q_acc + {{8{y_q_product[31]}}, y_q_product} -
+        {{8{y_q_window[sample_index][31]}}, y_q_window[sample_index]};
     wire signed [39:0] next_z_i =
-        z_i_acc + {{8{z_i_product[31]}}, z_i_product};
+        z_i_acc + {{8{z_i_product[31]}}, z_i_product} -
+        {{8{z_i_window[sample_index][31]}}, z_i_window[sample_index]};
     wire signed [39:0] next_z_q =
-        z_q_acc + {{8{z_q_product[31]}}, z_q_product};
+        z_q_acc + {{8{z_q_product[31]}}, z_q_product} -
+        {{8{z_q_window[sample_index][31]}}, z_q_window[sample_index]};
 
     reg signed [39:0] square_operand;
     wire signed [79:0] square_signed = square_operand * square_operand;
@@ -77,7 +94,9 @@ module mag_lockin_vector_75hz #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state <= S_COLLECT;
+            sample_index <= 8'd0;
             sample_count <= 8'd0;
+            window_full <= 1'b0;
             x_i_acc <= 40'sd0;
             x_q_acc <= 40'sd0;
             y_i_acc <= 40'sd0;
@@ -87,6 +106,16 @@ module mag_lockin_vector_75hz #(
             power_sum <= 82'd0;
             carrier_l2_squared_gauss_q16 <= 32'd0;
             result_valid <= 1'b0;
+            for (reset_index = 0;
+                 reset_index < WINDOW_SAMPLES;
+                 reset_index = reset_index + 1) begin
+                x_i_window[reset_index] <= 32'sd0;
+                x_q_window[reset_index] <= 32'sd0;
+                y_i_window[reset_index] <= 32'sd0;
+                y_q_window[reset_index] <= 32'sd0;
+                z_i_window[reset_index] <= 32'sd0;
+                z_q_window[reset_index] <= 32'sd0;
+            end
         end else begin
             result_valid <= 1'b0;
 
@@ -99,13 +128,29 @@ module mag_lockin_vector_75hz #(
                         y_q_acc <= next_y_q;
                         z_i_acc <= next_z_i;
                         z_q_acc <= next_z_q;
+                        x_i_window[sample_index] <= x_i_product;
+                        x_q_window[sample_index] <= x_q_product;
+                        y_i_window[sample_index] <= y_i_product;
+                        y_q_window[sample_index] <= y_q_product;
+                        z_i_window[sample_index] <= z_i_product;
+                        z_q_window[sample_index] <= z_q_product;
 
-                        if (sample_count == WINDOW_SAMPLES - 1) begin
-                            sample_count <= 8'd0;
+                        if (sample_index == WINDOW_SAMPLES - 1)
+                            sample_index <= 8'd0;
+                        else
+                            sample_index <= sample_index + 1'b1;
+
+                        if (window_full) begin
                             power_sum <= 82'd0;
                             state <= S_CALC_XI;
                         end else begin
-                            sample_count <= sample_count + 1'b1;
+                            if (sample_count == WINDOW_SAMPLES - 1) begin
+                                window_full <= 1'b1;
+                                power_sum <= 82'd0;
+                                state <= S_CALC_XI;
+                            end else begin
+                                sample_count <= sample_count + 1'b1;
+                            end
                         end
                     end
                 end
@@ -133,12 +178,6 @@ module mag_lockin_vector_75hz #(
                 S_CALC_ZQ: begin
                     carrier_l2_squared_gauss_q16 <= {5'd0, scaled_final_power};
                     result_valid <= 1'b1;
-                    x_i_acc <= 40'sd0;
-                    x_q_acc <= 40'sd0;
-                    y_i_acc <= 40'sd0;
-                    y_q_acc <= 40'sd0;
-                    z_i_acc <= 40'sd0;
-                    z_q_acc <= 40'sd0;
                     state <= S_COLLECT;
                 end
 

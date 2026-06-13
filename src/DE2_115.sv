@@ -195,9 +195,6 @@ wire [15:0] mag3_x, mag3_y, mag3_z;
 wire [15:0] mag4_x, mag4_y, mag4_z;
 wire [3:0]  qmc_sample_valid;
 wire        carrier_result_valid;
-wire        sine_pwm_out;
-wire [9:0]  sine_pwm_duty;
-localparam [31:0] SINE_PWM_PHASE_INCREMENT_75HZ = 32'd6442;
 localparam [3:0] ACTIVE_SENSOR_MASK = 4'b1111;
 wire [4:0]  qmc_dbg_state [0:3];
 wire [3:0]  qmc_dbg_err;
@@ -222,18 +219,6 @@ assign qmc_sda_in[2] = GPIO[5];
 assign GPIO[6] = qmc_scl[3];
 assign GPIO[7] = (qmc_sda_dir[3] && (qmc_sda_out[3] == 1'b0)) ? 1'b0 : 1'bz;
 assign qmc_sda_in[3] = GPIO[7];
-
-// 75 Hz sine-shaped PWM output for the electromagnet driver path.
-// Route GPIO[8] through an analog low-pass filter before the amplifier input.
-assign GPIO[8] = sine_pwm_out;
-
-sine_pwm_generator u_sine_pwm_generator (
-    .clk             (CLOCK_50),
-    .rst_n           (key3down),
-    .phase_increment (SINE_PWM_PHASE_INCREMENT_75HZ),
-    .pwm_out         (sine_pwm_out),
-    .pwm_duty        (sine_pwm_duty)
-);
 
 
 // =====================================================================
@@ -744,7 +729,9 @@ carrier_reference_75hz u_carrier_reference_75hz (
     .cosine_q15  (carrier_cosine_q15)
 );
 
-mag_lockin_vector_75hz u_sensor1_lockin_75hz (
+mag_lockin_vector_75hz #(
+    .WINDOW_SAMPLES (100)
+) u_sensor1_lockin_75hz (
     .clk                           (CLOCK_50),
     .rst_n                         (key3down),
     .sample_tick                   (carrier_sample_tick),
@@ -757,7 +744,9 @@ mag_lockin_vector_75hz u_sensor1_lockin_75hz (
     .result_valid                  (carrier_sensor_result_valid[0])
 );
 
-mag_lockin_vector_75hz u_sensor2_lockin_75hz (
+mag_lockin_vector_75hz #(
+    .WINDOW_SAMPLES (100)
+) u_sensor2_lockin_75hz (
     .clk                           (CLOCK_50),
     .rst_n                         (key3down),
     .sample_tick                   (carrier_sample_tick),
@@ -770,7 +759,9 @@ mag_lockin_vector_75hz u_sensor2_lockin_75hz (
     .result_valid                  (carrier_sensor_result_valid[1])
 );
 
-mag_lockin_vector_75hz u_sensor3_lockin_75hz (
+mag_lockin_vector_75hz #(
+    .WINDOW_SAMPLES (100)
+) u_sensor3_lockin_75hz (
     .clk                           (CLOCK_50),
     .rst_n                         (key3down),
     .sample_tick                   (carrier_sample_tick),
@@ -783,7 +774,9 @@ mag_lockin_vector_75hz u_sensor3_lockin_75hz (
     .result_valid                  (carrier_sensor_result_valid[2])
 );
 
-mag_lockin_vector_75hz u_sensor4_lockin_75hz (
+mag_lockin_vector_75hz #(
+    .WINDOW_SAMPLES (100)
+) u_sensor4_lockin_75hz (
     .clk                           (CLOCK_50),
     .rst_n                         (key3down),
     .sample_tick                   (carrier_sample_tick),
