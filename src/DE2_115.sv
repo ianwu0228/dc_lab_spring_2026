@@ -704,21 +704,34 @@ wire signed [15:0] vga_sensor4_y =
 wire signed [15:0] vga_sensor4_z =
     use_calibrated_display ? cal_mag4_z : $signed(mag4_z);
 
-// Coherent 75 Hz magnetic-field extraction.  All four QMC controllers share
-// the same clock and read schedule, so their valid pulses form one sample tick.
+// Coherent 75 Hz magnetic-field extraction.  Each QMC controller emits a
+// one-clock valid pulse after its own I2C read completes.  The pulses are not
+// guaranteed to overlap exactly, so collect them into a mask and advance the
+// lock-in once all active sensors have produced one fresh sample.
 reg carrier_sample_tick;
+reg [3:0] carrier_sample_seen;
 wire signed [15:0] carrier_sine_q15;
 wire signed [15:0] carrier_cosine_q15;
 wire [3:0] carrier_sensor_result_valid;
 assign carrier_result_valid = &carrier_sensor_result_valid;
 
-// Delay valid by one clock so the lock-in sees the X/Y/Z values assembled on
-// the preceding clock edge rather than the previous sensor sample.
+wire [3:0] carrier_sample_seen_next =
+    carrier_sample_seen | (qmc_sample_valid & ACTIVE_SENSOR_MASK);
+
 always @(posedge CLOCK_50 or negedge key3down) begin
-    if (!key3down)
+    if (!key3down) begin
         carrier_sample_tick <= 1'b0;
-    else
-        carrier_sample_tick <= &qmc_sample_valid;
+        carrier_sample_seen <= 4'd0;
+    end else begin
+        carrier_sample_tick <= 1'b0;
+
+        if (carrier_sample_seen_next == ACTIVE_SENSOR_MASK) begin
+            carrier_sample_tick <= 1'b1;
+            carrier_sample_seen <= 4'd0;
+        end else begin
+            carrier_sample_seen <= carrier_sample_seen_next;
+        end
+    end
 end
 
 carrier_reference_75hz u_carrier_reference_75hz (
