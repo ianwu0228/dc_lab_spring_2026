@@ -138,9 +138,11 @@ module DE2_115 (
 
 logic key0down;
 logic key1down;
+logic key2down;
 logic key3down;
 logic key0down_d;
 logic key1down_d;
+logic key2down_d;
 
 Debounce deb0(
     .i_in(KEY[0]),
@@ -156,6 +158,13 @@ Debounce deb1(
     .o_debounced(key1down)
 );
 
+Debounce deb2(
+    .i_in(KEY[2]),
+    .i_rst_n(1'b1),
+    .i_clk(CLOCK_50),
+    .o_debounced(key2down)
+);
+
 Debounce deb3(
     .i_in(KEY[3]),
     .i_rst_n(1'b1),
@@ -167,14 +176,17 @@ always @(posedge CLOCK_50 or negedge key3down) begin
     if (!key3down) begin
         key0down_d <= 1'b1;
         key1down_d <= 1'b1;
+        key2down_d <= 1'b1;
     end else begin
         key0down_d <= key0down;
         key1down_d <= key1down;
+        key2down_d <= key2down;
     end
 end
 
 wire calibration_start_pulse  = key0down_d && !key0down;
 wire calibration_finish_pulse = key1down_d && !key1down;
+wire stepper_move_pulse       = key2down_d && !key2down;
 
 assign HEX4 = '1;
 assign HEX5 = '1;
@@ -203,6 +215,11 @@ wire [3:0]  qmc_dbg_chip_id_valid;
 wire [3:0]  qmc_dbg_chip_id_ok;
 wire [3:0]  qmc_dbg_init_done;
 wire [3:0]  qmc_dbg_ack_error_latched;
+wire        stepper_step;
+wire        stepper_dir;
+wire        stepper_enable_n;
+wire        stepper_busy;
+wire        stepper_done_pulse;
 
 assign GPIO[0] = qmc_scl[0];
 assign GPIO[1] = (qmc_sda_dir[0] && (qmc_sda_out[0] == 1'b0)) ? 1'b0 : 1'bz;
@@ -219,6 +236,33 @@ assign qmc_sda_in[2] = GPIO[5];
 assign GPIO[6] = qmc_scl[3];
 assign GPIO[7] = (qmc_sda_dir[3] && (qmc_sda_out[3] == 1'b0)) ? 1'b0 : 1'bz;
 assign qmc_sda_in[3] = GPIO[7];
+
+// DRV8825 stepper-driver interface.
+// GPIO[8]  -> STEP
+// GPIO[9]  -> DIR
+// GPIO[10] -> ENABLE_N / nENBL
+assign GPIO[8]  = stepper_step;
+assign GPIO[9]  = stepper_dir;
+assign GPIO[10] = stepper_enable_n;
+
+stepper_drv8825_controller #(
+    .CLK_HZ           (50_000_000),
+    .STEP_RATE_HZ     (100),
+    .STEP_PULSE_US    (5),
+    .FIXED_MOVE_STEPS (200)
+) u_stepper_drv8825_controller (
+    .clk            (CLOCK_50),
+    .rst_n          (key3down),
+    .enable         (SW[17]),
+    .dir_cmd        (SW[16]),
+    .continuous_run (SW[15]),
+    .move_pulse     (stepper_move_pulse),
+    .drv_step       (stepper_step),
+    .drv_dir        (stepper_dir),
+    .drv_enable_n   (stepper_enable_n),
+    .busy           (stepper_busy),
+    .done_pulse     (stepper_done_pulse)
+);
 
 
 // =====================================================================
@@ -421,12 +465,19 @@ mag_calibrator u_calibrator_4 (
 // =====================================================================
 // KEY[0]     = restart calibration collection.
 // KEY[1]     = finish collection and calculate coefficients.
+// KEY[2]     = move stepper by 200 steps.
 // SW[4]      = display calibrated values after calculation is complete.
 // SW[3:2]    = selected sensor: 00, 01, 10, 11 select sensors 1, 2, 3, 4.
 // SW[1:0]    = selected axis: 00, 01, 10 select X, Y, Z.
+// SW[17]     = enable DRV8825 output, active high at switch.
+// SW[16]     = DRV8825 direction.
+// SW[15]     = continuously step while enabled.
 // LEDG[0]    = all active sensors initialized successfully.
 // LEDG[3:1]  = calibration collecting, calculating, done.
 // LEDG[5]    = calibration rejected because one or more axes lacked coverage.
+// LEDG[6]    = stepper controller busy.
+// LEDG[7]    = DRV8825 enabled.
+// LEDG[8]    = continuous stepper run command active.
 // LEDR[17:0] = absolute selected-axis field strength relative to configured range.
 logic signed [15:0] selected_mag_x, selected_mag_y, selected_mag_z;
 logic signed [15:0] selected_cal_mag_x, selected_cal_mag_y, selected_cal_mag_z;
@@ -475,7 +526,9 @@ assign LEDG[2]   = calibration_calculating;
 assign LEDG[3]   = calibration_done;
 assign LEDG[4]   = carrier_result_valid;
 assign LEDG[5]   = calibration_error;
-assign LEDG[8:6] = 3'd0;
+assign LEDG[6]   = stepper_busy;
+assign LEDG[7]   = ~stepper_enable_n;
+assign LEDG[8]   = SW[15];
 
 // =====================================================================
 // 觀察與驗證機制：SW[3:2] 選擇感測器，SW[1:0] 選擇 X, Y, Z 軸
@@ -611,50 +664,31 @@ lcd_1602_controller u_lcd (
     .lcd_en   (LCD_EN)
 );
 
+wire        [31:0] vga_sensor1_magnitude_squared_gauss_q16;
+wire        [31:0] vga_sensor2_magnitude_squared_gauss_q16;
+wire        [31:0] vga_sensor3_magnitude_squared_gauss_q16;
+wire        [31:0] vga_sensor4_magnitude_squared_gauss_q16;
+wire        [31:0] vga_sensor1_magnitude_squared_45hz_gauss_q16;
+wire        [31:0] vga_sensor2_magnitude_squared_45hz_gauss_q16;
+wire        [31:0] vga_sensor3_magnitude_squared_45hz_gauss_q16;
+wire        [31:0] vga_sensor4_magnitude_squared_45hz_gauss_q16;
+
 // =====================================================================
-// RS232 UART stream for all four sensors
+// RS232 UART stream for LUT construction: four-sensor H2 at 75 Hz and 45 Hz
 // =====================================================================
-wire signed [15:0] uart_s1_x =
-    use_calibrated_display ? cal_mag1_x : $signed(mag1_x);
-wire signed [15:0] uart_s1_y =
-    use_calibrated_display ? cal_mag1_y : $signed(mag1_y);
-wire signed [15:0] uart_s1_z =
-    use_calibrated_display ? cal_mag1_z : $signed(mag1_z);
-wire signed [15:0] uart_s2_x =
-    use_calibrated_display ? cal_mag2_x : $signed(mag2_x);
-wire signed [15:0] uart_s2_y =
-    use_calibrated_display ? cal_mag2_y : $signed(mag2_y);
-wire signed [15:0] uart_s2_z =
-    use_calibrated_display ? cal_mag2_z : $signed(mag2_z);
-wire signed [15:0] uart_s3_x =
-    use_calibrated_display ? cal_mag3_x : $signed(mag3_x);
-wire signed [15:0] uart_s3_y =
-    use_calibrated_display ? cal_mag3_y : $signed(mag3_y);
-wire signed [15:0] uart_s3_z =
-    use_calibrated_display ? cal_mag3_z : $signed(mag3_z);
-wire signed [15:0] uart_s4_x =
-    use_calibrated_display ? cal_mag4_x : $signed(mag4_x);
-wire signed [15:0] uart_s4_y =
-    use_calibrated_display ? cal_mag4_y : $signed(mag4_y);
-wire signed [15:0] uart_s4_z =
-    use_calibrated_display ? cal_mag4_z : $signed(mag4_z);
 
 mag_uart_streamer u_mag_uart_streamer (
-    .clk      (CLOCK_50),
-    .rst_n    (key3down),
-    .s1_x     (uart_s1_x),
-    .s1_y     (uart_s1_y),
-    .s1_z     (uart_s1_z),
-    .s2_x     (uart_s2_x),
-    .s2_y     (uart_s2_y),
-    .s2_z     (uart_s2_z),
-    .s3_x     (uart_s3_x),
-    .s3_y     (uart_s3_y),
-    .s3_z     (uart_s3_z),
-    .s4_x     (uart_s4_x),
-    .s4_y     (uart_s4_y),
-    .s4_z     (uart_s4_z),
-    .uart_txd (UART_TXD)
+    .clk        (CLOCK_50),
+    .rst_n      (key3down),
+    .h75_s1_q16 (vga_sensor1_magnitude_squared_gauss_q16),
+    .h75_s2_q16 (vga_sensor2_magnitude_squared_gauss_q16),
+    .h75_s3_q16 (vga_sensor3_magnitude_squared_gauss_q16),
+    .h75_s4_q16 (vga_sensor4_magnitude_squared_gauss_q16),
+    .h45_s1_q16 (vga_sensor1_magnitude_squared_45hz_gauss_q16),
+    .h45_s2_q16 (vga_sensor2_magnitude_squared_45hz_gauss_q16),
+    .h45_s3_q16 (vga_sensor3_magnitude_squared_45hz_gauss_q16),
+    .h45_s4_q16 (vga_sensor4_magnitude_squared_45hz_gauss_q16),
+    .uart_txd   (UART_TXD)
 );
 
 assign UART_CTS = 1'b0;
@@ -675,14 +709,6 @@ wire               vga_graph_plot_s1_pixel_on;
 wire               vga_graph_plot_s2_pixel_on;
 wire               vga_graph_plot_s3_pixel_on;
 wire               vga_graph_plot_s4_pixel_on;
-wire        [31:0] vga_sensor1_magnitude_squared_gauss_q16;
-wire        [31:0] vga_sensor2_magnitude_squared_gauss_q16;
-wire        [31:0] vga_sensor3_magnitude_squared_gauss_q16;
-wire        [31:0] vga_sensor4_magnitude_squared_gauss_q16;
-wire        [31:0] vga_sensor1_magnitude_squared_45hz_gauss_q16;
-wire        [31:0] vga_sensor2_magnitude_squared_45hz_gauss_q16;
-wire        [31:0] vga_sensor3_magnitude_squared_45hz_gauss_q16;
-wire        [31:0] vga_sensor4_magnitude_squared_45hz_gauss_q16;
 wire signed [15:0] vga_sensor1_x =
     use_calibrated_display ? cal_mag1_x : $signed(mag1_x);
 wire signed [15:0] vga_sensor1_y =

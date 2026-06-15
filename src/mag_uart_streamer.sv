@@ -3,23 +3,19 @@ module mag_uart_streamer #(
     parameter integer BAUD_RATE = 115_200,
     parameter integer FRAME_HZ = 80
 ) (
-    input  wire               clk,
-    input  wire               rst_n,
+    input  wire        clk,
+    input  wire        rst_n,
 
-    input  wire signed [15:0] s1_x,
-    input  wire signed [15:0] s1_y,
-    input  wire signed [15:0] s1_z,
-    input  wire signed [15:0] s2_x,
-    input  wire signed [15:0] s2_y,
-    input  wire signed [15:0] s2_z,
-    input  wire signed [15:0] s3_x,
-    input  wire signed [15:0] s3_y,
-    input  wire signed [15:0] s3_z,
-    input  wire signed [15:0] s4_x,
-    input  wire signed [15:0] s4_y,
-    input  wire signed [15:0] s4_z,
+    input  wire [31:0] h75_s1_q16,
+    input  wire [31:0] h75_s2_q16,
+    input  wire [31:0] h75_s3_q16,
+    input  wire [31:0] h75_s4_q16,
+    input  wire [31:0] h45_s1_q16,
+    input  wire [31:0] h45_s2_q16,
+    input  wire [31:0] h45_s3_q16,
+    input  wire [31:0] h45_s4_q16,
 
-    output wire               uart_txd
+    output wire        uart_txd
 );
 
     localparam integer FRAME_PERIOD = CLOCK_HZ / FRAME_HZ;
@@ -28,17 +24,19 @@ module mag_uart_streamer #(
         S_SEND      = 2'd1,
         S_WAIT_DONE = 2'd2;
 
+    // "H2,75,XXXXXXXX,XXXXXXXX,XXXXXXXX,XXXXXXXX,45,XXXXXXXX,XXXXXXXX,XXXXXXXX,XXXXXXXX\r\n"
+    localparam [6:0] LINE_LENGTH = 7'd82;
+
     reg [22:0] frame_counter;
     reg [1:0]  state;
-    reg [2:0]  sensor_index;
-    reg [4:0]  char_index;
+    reg [6:0]  char_index;
     reg        tx_start;
     reg [7:0]  tx_data;
 
-    reg signed [15:0] snap_s1_x, snap_s1_y, snap_s1_z;
-    reg signed [15:0] snap_s2_x, snap_s2_y, snap_s2_z;
-    reg signed [15:0] snap_s3_x, snap_s3_y, snap_s3_z;
-    reg signed [15:0] snap_s4_x, snap_s4_y, snap_s4_z;
+    reg [31:0] snap_h75_s1_q16, snap_h75_s2_q16;
+    reg [31:0] snap_h75_s3_q16, snap_h75_s4_q16;
+    reg [31:0] snap_h45_s1_q16, snap_h45_s2_q16;
+    reg [31:0] snap_h45_s3_q16, snap_h45_s4_q16;
 
     wire tx_busy;
     wire tx_done;
@@ -67,124 +65,110 @@ module mag_uart_streamer #(
         end
     endfunction
 
-    function automatic [15:0] signed_magnitude;
-        input signed [15:0] value;
+    function automatic [31:0] h2_value_for_index;
+        input [2:0] value_index;
         begin
-            if (value < 0)
-                signed_magnitude = (~value) + 1'b1;
-            else
-                signed_magnitude = value;
-        end
-    endfunction
-
-    function automatic [7:0] signed_word_char;
-        input signed [15:0] value;
-        input [2:0]         index;
-        reg [15:0]          magnitude;
-        begin
-            magnitude = signed_magnitude(value);
-
-            case (index)
-                3'd0: signed_word_char = value < 0 ? "-" : "+";
-                3'd1: signed_word_char = hex_to_ascii(magnitude[15:12]);
-                3'd2: signed_word_char = hex_to_ascii(magnitude[11:8]);
-                3'd3: signed_word_char = hex_to_ascii(magnitude[7:4]);
-                3'd4: signed_word_char = hex_to_ascii(magnitude[3:0]);
-                default: signed_word_char = " ";
+            case (value_index)
+                3'd0: h2_value_for_index = snap_h75_s1_q16;
+                3'd1: h2_value_for_index = snap_h75_s2_q16;
+                3'd2: h2_value_for_index = snap_h75_s3_q16;
+                3'd3: h2_value_for_index = snap_h75_s4_q16;
+                3'd4: h2_value_for_index = snap_h45_s1_q16;
+                3'd5: h2_value_for_index = snap_h45_s2_q16;
+                3'd6: h2_value_for_index = snap_h45_s3_q16;
+                default: h2_value_for_index = snap_h45_s4_q16;
             endcase
         end
     endfunction
 
-    function automatic [7:0] sensor_line_char;
-        input [2:0] sensor;
-        input [4:0] index;
-        reg signed [15:0] x_value;
-        reg signed [15:0] y_value;
-        reg signed [15:0] z_value;
+    function automatic [7:0] h2_hex_char;
+        input [2:0] value_index;
+        input [2:0] nibble_index;
+        reg [31:0] value;
         begin
-            case (sensor)
-                3'd0: begin
-                    x_value = snap_s1_x;
-                    y_value = snap_s1_y;
-                    z_value = snap_s1_z;
-                end
-                3'd1: begin
-                    x_value = snap_s2_x;
-                    y_value = snap_s2_y;
-                    z_value = snap_s2_z;
-                end
-                3'd2: begin
-                    x_value = snap_s3_x;
-                    y_value = snap_s3_y;
-                    z_value = snap_s3_z;
-                end
+            value = h2_value_for_index(value_index);
+            case (nibble_index)
+                3'd0: h2_hex_char = hex_to_ascii(value[31:28]);
+                3'd1: h2_hex_char = hex_to_ascii(value[27:24]);
+                3'd2: h2_hex_char = hex_to_ascii(value[23:20]);
+                3'd3: h2_hex_char = hex_to_ascii(value[19:16]);
+                3'd4: h2_hex_char = hex_to_ascii(value[15:12]);
+                3'd5: h2_hex_char = hex_to_ascii(value[11:8]);
+                3'd6: h2_hex_char = hex_to_ascii(value[7:4]);
+                default: h2_hex_char = hex_to_ascii(value[3:0]);
+            endcase
+        end
+    endfunction
+
+    function automatic [7:0] h2_line_char;
+        input [6:0] index;
+        reg [6:0] offset;
+        begin
+            case (index)
+                7'd0:  h2_line_char = "H";
+                7'd1:  h2_line_char = "2";
+                7'd2:  h2_line_char = ",";
+                7'd3:  h2_line_char = "7";
+                7'd4:  h2_line_char = "5";
+                7'd5:  h2_line_char = ",";
+                7'd14: h2_line_char = ",";
+                7'd23: h2_line_char = ",";
+                7'd32: h2_line_char = ",";
+                7'd41: h2_line_char = ",";
+                7'd42: h2_line_char = "4";
+                7'd43: h2_line_char = "5";
+                7'd44: h2_line_char = ",";
+                7'd53: h2_line_char = ",";
+                7'd62: h2_line_char = ",";
+                7'd71: h2_line_char = ",";
+                7'd80: h2_line_char = 8'h0D;
+                7'd81: h2_line_char = 8'h0A;
                 default: begin
-                    x_value = snap_s4_x;
-                    y_value = snap_s4_y;
-                    z_value = snap_s4_z;
+                    if (index < 7'd14) begin
+                        offset = index - 7'd6;
+                        h2_line_char = h2_hex_char(3'd0, offset[2:0]);
+                    end else if (index < 7'd23) begin
+                        offset = index - 7'd15;
+                        h2_line_char = h2_hex_char(3'd1, offset[2:0]);
+                    end else if (index < 7'd32) begin
+                        offset = index - 7'd24;
+                        h2_line_char = h2_hex_char(3'd2, offset[2:0]);
+                    end else if (index < 7'd41) begin
+                        offset = index - 7'd33;
+                        h2_line_char = h2_hex_char(3'd3, offset[2:0]);
+                    end else if (index < 7'd53) begin
+                        offset = index - 7'd45;
+                        h2_line_char = h2_hex_char(3'd4, offset[2:0]);
+                    end else if (index < 7'd62) begin
+                        offset = index - 7'd54;
+                        h2_line_char = h2_hex_char(3'd5, offset[2:0]);
+                    end else if (index < 7'd71) begin
+                        offset = index - 7'd63;
+                        h2_line_char = h2_hex_char(3'd6, offset[2:0]);
+                    end else begin
+                        offset = index - 7'd72;
+                        h2_line_char = h2_hex_char(3'd7, offset[2:0]);
+                    end
                 end
-            endcase
-
-            case (index)
-                5'd0:  sensor_line_char = "S";
-                5'd1:  sensor_line_char = "1" + sensor[1:0];
-                5'd2:  sensor_line_char = " ";
-                5'd3:  sensor_line_char = "X";
-                5'd4:  sensor_line_char = "=";
-                5'd5:  sensor_line_char = signed_word_char(x_value, 3'd0);
-                5'd6:  sensor_line_char = signed_word_char(x_value, 3'd1);
-                5'd7:  sensor_line_char = signed_word_char(x_value, 3'd2);
-                5'd8:  sensor_line_char = signed_word_char(x_value, 3'd3);
-                5'd9:  sensor_line_char = signed_word_char(x_value, 3'd4);
-                5'd10: sensor_line_char = " ";
-                5'd11: sensor_line_char = "Y";
-                5'd12: sensor_line_char = "=";
-                5'd13: sensor_line_char = signed_word_char(y_value, 3'd0);
-                5'd14: sensor_line_char = signed_word_char(y_value, 3'd1);
-                5'd15: sensor_line_char = signed_word_char(y_value, 3'd2);
-                5'd16: sensor_line_char = signed_word_char(y_value, 3'd3);
-                5'd17: sensor_line_char = signed_word_char(y_value, 3'd4);
-                5'd18: sensor_line_char = " ";
-                5'd19: sensor_line_char = "Z";
-                5'd20: sensor_line_char = "=";
-                5'd21: sensor_line_char = signed_word_char(z_value, 3'd0);
-                5'd22: sensor_line_char = signed_word_char(z_value, 3'd1);
-                5'd23: sensor_line_char = signed_word_char(z_value, 3'd2);
-                5'd24: sensor_line_char = signed_word_char(z_value, 3'd3);
-                5'd25: sensor_line_char = signed_word_char(z_value, 3'd4);
-                5'd26: sensor_line_char = 8'h0D;
-                default: sensor_line_char = 8'h0A;
             endcase
         end
     endfunction
-
-    wire [4:0] current_line_length =
-        (sensor_index < 3'd4) ? 5'd28 : 5'd2;
-    wire [7:0] current_character =
-        (sensor_index < 3'd4)
-            ? sensor_line_char(sensor_index, char_index)
-            : ((char_index == 5'd0) ? 8'h0D : 8'h0A);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             frame_counter <= 23'd0;
-            state         <= S_WAIT;
-            sensor_index  <= 3'd0;
-            char_index    <= 5'd0;
-            tx_start      <= 1'b0;
-            tx_data       <= 8'd0;
-            snap_s1_x     <= 16'sd0;
-            snap_s1_y     <= 16'sd0;
-            snap_s1_z     <= 16'sd0;
-            snap_s2_x     <= 16'sd0;
-            snap_s2_y     <= 16'sd0;
-            snap_s2_z     <= 16'sd0;
-            snap_s3_x     <= 16'sd0;
-            snap_s3_y     <= 16'sd0;
-            snap_s3_z     <= 16'sd0;
-            snap_s4_x     <= 16'sd0;
-            snap_s4_y     <= 16'sd0;
-            snap_s4_z     <= 16'sd0;
+            state <= S_WAIT;
+            char_index <= 7'd0;
+            tx_start <= 1'b0;
+            tx_data <= 8'd0;
+            snap_h75_s1_q16 <= 32'd0;
+            snap_h75_s2_q16 <= 32'd0;
+            snap_h75_s3_q16 <= 32'd0;
+            snap_h75_s4_q16 <= 32'd0;
+            snap_h45_s1_q16 <= 32'd0;
+            snap_h45_s2_q16 <= 32'd0;
+            snap_h45_s3_q16 <= 32'd0;
+            snap_h45_s4_q16 <= 32'd0;
         end else begin
             tx_start <= 1'b0;
 
@@ -192,21 +176,16 @@ module mag_uart_streamer #(
                 S_WAIT: begin
                     if (frame_counter_done) begin
                         frame_counter <= 23'd0;
-                        sensor_index  <= 3'd0;
-                        char_index    <= 5'd0;
-                        snap_s1_x     <= s1_x;
-                        snap_s1_y     <= s1_y;
-                        snap_s1_z     <= s1_z;
-                        snap_s2_x     <= s2_x;
-                        snap_s2_y     <= s2_y;
-                        snap_s2_z     <= s2_z;
-                        snap_s3_x     <= s3_x;
-                        snap_s3_y     <= s3_y;
-                        snap_s3_z     <= s3_z;
-                        snap_s4_x     <= s4_x;
-                        snap_s4_y     <= s4_y;
-                        snap_s4_z     <= s4_z;
-                        state         <= S_SEND;
+                        char_index <= 7'd0;
+                        snap_h75_s1_q16 <= h75_s1_q16;
+                        snap_h75_s2_q16 <= h75_s2_q16;
+                        snap_h75_s3_q16 <= h75_s3_q16;
+                        snap_h75_s4_q16 <= h75_s4_q16;
+                        snap_h45_s1_q16 <= h45_s1_q16;
+                        snap_h45_s2_q16 <= h45_s2_q16;
+                        snap_h45_s3_q16 <= h45_s3_q16;
+                        snap_h45_s4_q16 <= h45_s4_q16;
+                        state <= S_SEND;
                     end else begin
                         frame_counter <= frame_counter + 1'b1;
                     end
@@ -214,23 +193,17 @@ module mag_uart_streamer #(
 
                 S_SEND: begin
                     if (!tx_busy) begin
-                        tx_data  <= current_character;
+                        tx_data <= h2_line_char(char_index);
                         tx_start <= 1'b1;
-                        state    <= S_WAIT_DONE;
+                        state <= S_WAIT_DONE;
                     end
                 end
 
                 S_WAIT_DONE: begin
                     if (tx_done) begin
-                        if (char_index == current_line_length - 1'b1) begin
-                            char_index <= 5'd0;
-
-                            if (sensor_index == 3'd4) begin
-                                state <= S_WAIT;
-                            end else begin
-                                sensor_index <= sensor_index + 1'b1;
-                                state <= S_SEND;
-                            end
+                        if (char_index == LINE_LENGTH - 1'b1) begin
+                            state <= S_WAIT;
+                            char_index <= 7'd0;
                         end else begin
                             char_index <= char_index + 1'b1;
                             state <= S_SEND;
