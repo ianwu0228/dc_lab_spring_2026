@@ -1,4 +1,4 @@
-module vga_four_sensor_dashboard (
+module vga_three_sensor_dashboard (
     input  wire               clk,
     input  wire               rst_n,
     input  wire               frame_start,
@@ -15,17 +15,12 @@ module vga_four_sensor_dashboard (
     input  wire signed [15:0] sensor3_x,
     input  wire signed [15:0] sensor3_y,
     input  wire signed [15:0] sensor3_z,
-    input  wire signed [15:0] sensor4_x,
-    input  wire signed [15:0] sensor4_y,
-    input  wire signed [15:0] sensor4_z,
     input  wire        [31:0] sensor1_h2_75hz_gauss_q16,
     input  wire        [31:0] sensor2_h2_75hz_gauss_q16,
     input  wire        [31:0] sensor3_h2_75hz_gauss_q16,
-    input  wire        [31:0] sensor4_h2_75hz_gauss_q16,
     input  wire        [31:0] sensor1_h2_45hz_gauss_q16,
     input  wire        [31:0] sensor2_h2_45hz_gauss_q16,
     input  wire        [31:0] sensor3_h2_45hz_gauss_q16,
-    input  wire        [31:0] sensor4_h2_45hz_gauss_q16,
     input  wire               calibrated_mode,
     input  wire               calibration_collecting,
     input  wire               calibration_calculating,
@@ -35,8 +30,7 @@ module vga_four_sensor_dashboard (
     output wire               graph_axis_pixel_on,
     output wire               graph_plot_s1_pixel_on,
     output wire               graph_plot_s2_pixel_on,
-    output wire               graph_plot_s3_pixel_on,
-    output wire               graph_plot_s4_pixel_on
+    output wire               graph_plot_s3_pixel_on
 );
 
     localparam [9:0] GRAPH_LEFT   = 10'd96;
@@ -49,15 +43,12 @@ module vga_four_sensor_dashboard (
     reg signed [15:0] snapshot_s1_x, snapshot_s1_y, snapshot_s1_z;
     reg signed [15:0] snapshot_s2_x, snapshot_s2_y, snapshot_s2_z;
     reg signed [15:0] snapshot_s3_x, snapshot_s3_y, snapshot_s3_z;
-    reg signed [15:0] snapshot_s4_x, snapshot_s4_y, snapshot_s4_z;
     reg        [31:0] snapshot_s1_h2_75hz_gauss_q16;
     reg        [31:0] snapshot_s2_h2_75hz_gauss_q16;
     reg        [31:0] snapshot_s3_h2_75hz_gauss_q16;
-    reg        [31:0] snapshot_s4_h2_75hz_gauss_q16;
     reg        [31:0] snapshot_s1_h2_45hz_gauss_q16;
     reg        [31:0] snapshot_s2_h2_45hz_gauss_q16;
     reg        [31:0] snapshot_s3_h2_45hz_gauss_q16;
-    reg        [31:0] snapshot_s4_h2_45hz_gauss_q16;
     reg               snapshot_calibrated_mode;
     reg               snapshot_collecting;
     reg               snapshot_calculating;
@@ -65,7 +56,6 @@ module vga_four_sensor_dashboard (
     reg        [7:0]  plot_history_s1 [0:511];
     reg        [7:0]  plot_history_s2 [0:511];
     reg        [7:0]  plot_history_s3 [0:511];
-    reg        [7:0]  plot_history_s4 [0:511];
     reg        [8:0]  history_write_index;
     reg        [9:0]  history_valid_count;
 
@@ -98,8 +88,6 @@ module vga_four_sensor_dashboard (
         GRAPH_BOTTOM - {2'd0, plot_history_s2[graph_history_index]};
     wire [9:0]   graph_plot_y_s3 =
         GRAPH_BOTTOM - {2'd0, plot_history_s3[graph_history_index]};
-    wire [9:0]   graph_plot_y_s4 =
-        GRAPH_BOTTOM - {2'd0, plot_history_s4[graph_history_index]};
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -112,17 +100,12 @@ module vga_four_sensor_dashboard (
             snapshot_s3_x <= 16'sd0;
             snapshot_s3_y <= 16'sd0;
             snapshot_s3_z <= 16'sd0;
-            snapshot_s4_x <= 16'sd0;
-            snapshot_s4_y <= 16'sd0;
-            snapshot_s4_z <= 16'sd0;
             snapshot_s1_h2_75hz_gauss_q16 <= 32'd0;
             snapshot_s2_h2_75hz_gauss_q16 <= 32'd0;
             snapshot_s3_h2_75hz_gauss_q16 <= 32'd0;
-            snapshot_s4_h2_75hz_gauss_q16 <= 32'd0;
             snapshot_s1_h2_45hz_gauss_q16 <= 32'd0;
             snapshot_s2_h2_45hz_gauss_q16 <= 32'd0;
             snapshot_s3_h2_45hz_gauss_q16 <= 32'd0;
-            snapshot_s4_h2_45hz_gauss_q16 <= 32'd0;
             snapshot_calibrated_mode <= 1'b0;
             snapshot_collecting <= 1'b0;
             snapshot_calculating <= 1'b0;
@@ -139,17 +122,12 @@ module vga_four_sensor_dashboard (
             snapshot_s3_x <= sensor3_x;
             snapshot_s3_y <= sensor3_y;
             snapshot_s3_z <= sensor3_z;
-            snapshot_s4_x <= sensor4_x;
-            snapshot_s4_y <= sensor4_y;
-            snapshot_s4_z <= sensor4_z;
             snapshot_s1_h2_75hz_gauss_q16 <= sensor1_h2_75hz_gauss_q16;
             snapshot_s2_h2_75hz_gauss_q16 <= sensor2_h2_75hz_gauss_q16;
             snapshot_s3_h2_75hz_gauss_q16 <= sensor3_h2_75hz_gauss_q16;
-            snapshot_s4_h2_75hz_gauss_q16 <= sensor4_h2_75hz_gauss_q16;
             snapshot_s1_h2_45hz_gauss_q16 <= sensor1_h2_45hz_gauss_q16;
             snapshot_s2_h2_45hz_gauss_q16 <= sensor2_h2_45hz_gauss_q16;
             snapshot_s3_h2_45hz_gauss_q16 <= sensor3_h2_45hz_gauss_q16;
-            snapshot_s4_h2_45hz_gauss_q16 <= sensor4_h2_45hz_gauss_q16;
             snapshot_calibrated_mode <= calibrated_mode;
             snapshot_collecting <= calibration_collecting;
             snapshot_calculating <= calibration_calculating;
@@ -160,8 +138,6 @@ module vga_four_sensor_dashboard (
                 magnitude_to_plot_level(sensor2_h2_75hz_gauss_q16);
             plot_history_s3[history_write_index] <=
                 magnitude_to_plot_level(sensor3_h2_75hz_gauss_q16);
-            plot_history_s4[history_write_index] <=
-                magnitude_to_plot_level(sensor4_h2_75hz_gauss_q16);
             history_write_index <= history_write_index + 1'b1;
 
             if (!history_full)
@@ -359,19 +335,8 @@ module vga_four_sensor_dashboard (
                 snapshot_s3_h2_75hz_gauss_q16,
                 snapshot_s3_h2_45hz_gauss_q16
             );
-            5'd16: line_text = sensor_axis_line(
-                "4",
-                snapshot_s4_x,
-                snapshot_s4_y,
-                snapshot_s4_z
-            );
-            5'd17: line_text = sensor_h2_line(
-                "4",
-                snapshot_s4_h2_75hz_gauss_q16,
-                snapshot_s4_h2_45hz_gauss_q16
-            );
-            5'd19: line_text = {"H75 GRAPH 0-16 G^2  S1 S2 S3 S4", {9{" "}}};
-            5'd28: line_text = {"S1 GREEN S2 RED S3 BLUE S4 YELLOW", {7{" "}}};
+            5'd17: line_text = {"H75 GRAPH 0-16 G^2  S1 S2 S3", {12{" "}}};
+            5'd28: line_text = {"S1 GREEN S2 RED S3 BLUE", {17{" "}}};
             default: line_text = {40{" "}};
         endcase
 
@@ -452,9 +417,4 @@ module vga_four_sensor_dashboard (
                                     graph_history_valid &&
                                     ((pixel_y == graph_plot_y_s3) ||
                                      (pixel_y == graph_plot_y_s3 + 1'b1));
-    assign graph_plot_s4_pixel_on = active_video && graph_area &&
-                                    graph_history_valid &&
-                                    ((pixel_y == graph_plot_y_s4) ||
-                                     (pixel_y == graph_plot_y_s4 + 1'b1));
-
 endmodule

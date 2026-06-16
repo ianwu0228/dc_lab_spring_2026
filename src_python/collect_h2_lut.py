@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import csv
-import math
 import re
 import statistics
 import sys
@@ -14,28 +13,34 @@ except ImportError:
     raise
 
 
-H2_RE = re.compile(
-    r"^H2,75,"
-    r"(?P<h75_s1>[0-9A-Fa-f]{8}),"
-    r"(?P<h75_s2>[0-9A-Fa-f]{8}),"
-    r"(?P<h75_s3>[0-9A-Fa-f]{8}),"
-    r"(?P<h75_s4>[0-9A-Fa-f]{8}),"
-    r"45,"
-    r"(?P<h45_s1>[0-9A-Fa-f]{8}),"
-    r"(?P<h45_s2>[0-9A-Fa-f]{8}),"
-    r"(?P<h45_s3>[0-9A-Fa-f]{8}),"
-    r"(?P<h45_s4>[0-9A-Fa-f]{8})$"
-)
+HEX32_RE = re.compile(r"^[0-9A-Fa-f]{8}$")
 
 
 def parse_h2_line(line: str):
-    match = H2_RE.match(line)
-    if not match:
+    parts = line.split(",")
+    if len(parts) not in (9, 11):
+        return None
+    if parts[0] != "H2" or parts[1] != "75":
+        return None
+
+    try:
+        freq45_index = parts.index("45", 2)
+    except ValueError:
+        return None
+
+    h75_hex = parts[2:freq45_index]
+    h45_hex = parts[freq45_index + 1:]
+    sensor_count = len(h75_hex)
+
+    if sensor_count not in (3, 4) or len(h45_hex) != sensor_count:
+        return None
+    if not all(HEX32_RE.match(value) for value in h75_hex + h45_hex):
         return None
 
     return {
-        "75": [int(match.group(f"h75_s{i}"), 16) for i in range(1, 5)],
-        "45": [int(match.group(f"h45_s{i}"), 16) for i in range(1, 5)],
+        "75": [int(value, 16) for value in h75_hex],
+        "45": [int(value, 16) for value in h45_hex],
+        "sensor_count": sensor_count,
         "raw_line": line,
     }
 
@@ -72,7 +77,8 @@ def collect_samples(ser, frequency: str, sample_count: int, settle_seconds: floa
 
 
 def summarize_samples(samples):
-    columns = [[sample[i] for sample in samples] for i in range(4)]
+    sensor_count = len(samples[0])
+    columns = [[sample[i] for sample in samples] for i in range(sensor_count)]
     means_q16 = [sum(col) / len(col) for col in columns]
     std_q16 = [
         statistics.pstdev(col) if len(col) > 1 else 0.0
@@ -83,7 +89,7 @@ def summarize_samples(samples):
     if total_q16 > 0:
         ratios = [value / total_q16 for value in means_q16]
     else:
-        ratios = [0.0, 0.0, 0.0, 0.0]
+        ratios = [0.0 for _ in range(sensor_count)]
 
     return {
         "h2_mean_q16": means_q16,
@@ -117,6 +123,17 @@ def build_positions():
 
 def write_header(writer):
     writer.writeheader()
+
+
+def sensor_list_text(values, fmt):
+    return " ".join(
+        f"S{index + 1}={format(value, fmt)}"
+        for index, value in enumerate(values)
+    )
+
+
+def padded_value(values, index, default=""):
+    return values[index] if index < len(values) else default
 
 
 def main() -> int:
@@ -161,6 +178,7 @@ def main() -> int:
         "local_y_cm",
         "frequency_hz",
         "sample_count",
+        "sensor_count",
         "h2_s1_q16",
         "h2_s2_q16",
         "h2_s3_q16",
@@ -186,6 +204,7 @@ def main() -> int:
     print(f"Keys: {', '.join(key_names)}")
     print(f"Grid: {len(positions)} positions/key, {total_entries} entries total")
     print(f"Samples/entry: {args.samples}")
+    print("Sensor count: auto-detected from the FPGA UART frame, supports 3 or 4 sensors.")
     print()
     print("During each prompt, place the electromagnet at the requested point,")
     print("press the physical key fully down so height is fixed, then hold still.")
@@ -226,21 +245,16 @@ def main() -> int:
 
                             print(
                                 "Mean H2 G^2: "
-                                f"S1={h2_g2[0]:.6f} "
-                                f"S2={h2_g2[1]:.6f} "
-                                f"S3={h2_g2[2]:.6f} "
-                                f"S4={h2_g2[3]:.6f} "
+                                f"{sensor_list_text(h2_g2, '.6f')} "
                                 f"total={summary['h2_total_g2']:.6f}"
                             )
                             print(
                                 "Normalized F: "
-                                f"[{ratios[0]:.4f}, {ratios[1]:.4f}, "
-                                f"{ratios[2]:.4f}, {ratios[3]:.4f}]"
+                                f"[{', '.join(f'{ratio:.4f}' for ratio in ratios)}]"
                             )
                             print(
                                 "Std Q16: "
-                                f"[{std_q16[0]:.1f}, {std_q16[1]:.1f}, "
-                                f"{std_q16[2]:.1f}, {std_q16[3]:.1f}]"
+                                f"[{', '.join(f'{std:.1f}' for std in std_q16)}]"
                             )
 
                             if args.accept_all:
@@ -259,24 +273,25 @@ def main() -> int:
                                         "local_y_cm": local_y_cm,
                                         "frequency_hz": int(args.frequency),
                                         "sample_count": args.samples,
-                                        "h2_s1_q16": round(h2_q16[0]),
-                                        "h2_s2_q16": round(h2_q16[1]),
-                                        "h2_s3_q16": round(h2_q16[2]),
-                                        "h2_s4_q16": round(h2_q16[3]),
+                                        "sensor_count": len(h2_q16),
+                                        "h2_s1_q16": round(padded_value(h2_q16, 0, 0)),
+                                        "h2_s2_q16": round(padded_value(h2_q16, 1, 0)),
+                                        "h2_s3_q16": round(padded_value(h2_q16, 2, 0)),
+                                        "h2_s4_q16": round(h2_q16[3]) if len(h2_q16) > 3 else "",
                                         "h2_total_q16": round(summary["h2_total_q16"]),
-                                        "f1": ratios[0],
-                                        "f2": ratios[1],
-                                        "f3": ratios[2],
-                                        "f4": ratios[3],
-                                        "h2_s1_g2": h2_g2[0],
-                                        "h2_s2_g2": h2_g2[1],
-                                        "h2_s3_g2": h2_g2[2],
-                                        "h2_s4_g2": h2_g2[3],
+                                        "f1": padded_value(ratios, 0),
+                                        "f2": padded_value(ratios, 1),
+                                        "f3": padded_value(ratios, 2),
+                                        "f4": padded_value(ratios, 3),
+                                        "h2_s1_g2": padded_value(h2_g2, 0),
+                                        "h2_s2_g2": padded_value(h2_g2, 1),
+                                        "h2_s3_g2": padded_value(h2_g2, 2),
+                                        "h2_s4_g2": padded_value(h2_g2, 3),
                                         "h2_total_g2": summary["h2_total_g2"],
-                                        "std_s1_q16": std_q16[0],
-                                        "std_s2_q16": std_q16[1],
-                                        "std_s3_q16": std_q16[2],
-                                        "std_s4_q16": std_q16[3],
+                                        "std_s1_q16": padded_value(std_q16, 0),
+                                        "std_s2_q16": padded_value(std_q16, 1),
+                                        "std_s3_q16": padded_value(std_q16, 2),
+                                        "std_s4_q16": padded_value(std_q16, 3),
                                     }
                                 )
                                 csv_file.flush()

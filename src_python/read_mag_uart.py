@@ -15,7 +15,7 @@ except ImportError:
 
 
 LINE_RE = re.compile(
-    r"^S(?P<sensor>[1-4]) "
+    r"^S(?P<sensor>[1-3]) "
     r"X=(?P<x>[+-][0-9A-Fa-f]{4}) "
     r"Y=(?P<y>[+-][0-9A-Fa-f]{4}) "
     r"Z=(?P<z>[+-][0-9A-Fa-f]{4})$"
@@ -62,15 +62,15 @@ class LivePlot:
                 "t": deque(),
                 "mag2": deque(),
             }
-            for sensor in range(1, 5)
+            for sensor in range(1, 4)
         }
-        self.baseline = {sensor: None for sensor in range(1, 5)}
+        self.baseline = {sensor: None for sensor in range(1, 4)}
 
         plt.ion()
         self.figure, self.axis = plt.subplots(1, 1, figsize=(10, 6))
         self.lines = {}
 
-        for sensor in range(1, 5):
+        for sensor in range(1, 4):
             self.lines[sensor] = self.axis.plot([], [], label=f"S{sensor}")[0]
 
         title = "Magnetic Field Magnitude Squared"
@@ -121,7 +121,7 @@ class LivePlot:
         x_max = max(self.window_seconds, now)
         visible_values = []
 
-        for sensor in range(1, 5):
+        for sensor in range(1, 4):
             values = self.history[sensor]
             times = list(values["t"])
             mag2_values = list(values["mag2"])
@@ -161,7 +161,7 @@ class LivePlot:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Read four-sensor magnetometer data from FPGA RS232 UART."
+        description="Read three-sensor magnetometer data from FPGA RS232 UART."
     )
     parser.add_argument(
         "port",
@@ -177,7 +177,7 @@ def main() -> int:
     parser.add_argument(
         "--plot",
         action="store_true",
-        help="Plot live X^2+Y^2+Z^2 traces for all four sensors.",
+        help="Plot live X^2+Y^2+Z^2 traces for all three sensors.",
     )
     parser.add_argument(
         "--plot-window",

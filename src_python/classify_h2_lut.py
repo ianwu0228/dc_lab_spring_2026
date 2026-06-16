@@ -14,28 +14,34 @@ except ImportError:
     raise
 
 
-H2_RE = re.compile(
-    r"^H2,75,"
-    r"(?P<h75_s1>[0-9A-Fa-f]{8}),"
-    r"(?P<h75_s2>[0-9A-Fa-f]{8}),"
-    r"(?P<h75_s3>[0-9A-Fa-f]{8}),"
-    r"(?P<h75_s4>[0-9A-Fa-f]{8}),"
-    r"45,"
-    r"(?P<h45_s1>[0-9A-Fa-f]{8}),"
-    r"(?P<h45_s2>[0-9A-Fa-f]{8}),"
-    r"(?P<h45_s3>[0-9A-Fa-f]{8}),"
-    r"(?P<h45_s4>[0-9A-Fa-f]{8})$"
-)
+HEX32_RE = re.compile(r"^[0-9A-Fa-f]{8}$")
 
 
 def parse_h2_line(line: str):
-    match = H2_RE.match(line)
-    if not match:
+    parts = line.split(",")
+    if len(parts) not in (9, 11):
+        return None
+    if parts[0] != "H2" or parts[1] != "75":
+        return None
+
+    try:
+        freq45_index = parts.index("45", 2)
+    except ValueError:
+        return None
+
+    h75_hex = parts[2:freq45_index]
+    h45_hex = parts[freq45_index + 1:]
+    sensor_count = len(h75_hex)
+
+    if sensor_count not in (3, 4) or len(h45_hex) != sensor_count:
+        return None
+    if not all(HEX32_RE.match(value) for value in h75_hex + h45_hex):
         return None
 
     return {
-        "75": [int(match.group(f"h75_s{i}"), 16) for i in range(1, 5)],
-        "45": [int(match.group(f"h45_s{i}"), 16) for i in range(1, 5)],
+        "75": [int(value, 16) for value in h75_hex],
+        "45": [int(value, 16) for value in h45_hex],
+        "sensor_count": sensor_count,
     }
 
 
@@ -57,17 +63,30 @@ def read_h2_frame(ser):
 def ratios_from_h2(values):
     total = sum(values)
     if total <= 0:
-        return [0.0, 0.0, 0.0, 0.0], 0.0
+        return [0.0 for _ in values], 0.0
     return [value / total for value in values], total
 
 
 def average_samples(samples):
     if not samples:
-        return [0.0, 0.0, 0.0, 0.0]
+        return []
+    sensor_count = len(samples[0])
     return [
         sum(sample[index] for sample in samples) / len(samples)
-        for index in range(4)
+        for index in range(sensor_count)
     ]
+
+
+def infer_sensor_count(row):
+    try:
+        sensor_count = int(row.get("sensor_count", ""))
+        if sensor_count in (3, 4):
+            return sensor_count
+    except (TypeError, ValueError):
+        pass
+
+    s4_value = str(row.get("h2_s4_q16", "")).strip()
+    return 4 if s4_value else 3
 
 
 def load_lut(path, frequency):
@@ -78,16 +97,15 @@ def load_lut(path, frequency):
             if str(row.get("frequency_hz", "")).strip() != str(frequency):
                 continue
 
+            sensor_count = infer_sensor_count(row)
             h2 = [
-                float(row["h2_s1_q16"]),
-                float(row["h2_s2_q16"]),
-                float(row["h2_s3_q16"]),
-                float(row["h2_s4_q16"]),
+                float(row[f"h2_s{index}_q16"])
+                for index in range(1, sensor_count + 1)
             ]
             ratios, total = ratios_from_h2(h2)
 
             try:
-                ratios = [float(row[f"f{i}"]) for i in range(1, 5)]
+                ratios = [float(row[f"f{i}"]) for i in range(1, sensor_count + 1)]
             except (KeyError, TypeError, ValueError):
                 pass
 
@@ -101,6 +119,7 @@ def load_lut(path, frequency):
                     "key_id": int(row["key_id"]),
                     "key_name": row.get("key_name", str(row["key_id"])),
                     "position_label": row.get("position_label", ""),
+                    "sensor_count": sensor_count,
                     "ratios": ratios,
                     "total_q16": max(total, 1.0),
                 }
@@ -115,7 +134,7 @@ def load_lut(path, frequency):
 def score_entry(ratios, total_q16, entry, strength_weight):
     ratio_error = sum(
         (ratios[index] - entry["ratios"][index]) ** 2
-        for index in range(4)
+        for index in range(len(ratios))
     )
 
     if strength_weight <= 0:
@@ -128,10 +147,20 @@ def score_entry(ratios, total_q16, entry, strength_weight):
 
 
 def classify(values, entries, strength_weight):
+    matching_entries = [
+        entry for entry in entries
+        if entry["sensor_count"] == len(values)
+    ]
+    if not matching_entries:
+        raise ValueError(
+            f"LUT has no entries for {len(values)}-sensor frames. "
+            "Collect a matching LUT or use the matching FPGA sensor mode."
+        )
+
     ratios, total_q16 = ratios_from_h2(values)
     scored = [
         (score_entry(ratios, total_q16, entry, strength_weight), entry)
-        for entry in entries
+        for entry in matching_entries
     ]
     scored.sort(key=lambda item: item[0])
 
@@ -151,6 +180,10 @@ def classify(values, entries, strength_weight):
         "h2_g2": [value / 65536.0 for value in values],
         "total_g2": total_q16 / 65536.0,
     }
+
+
+def format_series(values, precision):
+    return ",".join(f"{value:.{precision}f}" for value in values)
 
 
 def main() -> int:
@@ -201,6 +234,7 @@ def main() -> int:
 
     print(f"Loaded {len(entries)} LUT entries from {args.lut}")
     print(f"Classifying {args.frequency} Hz H2 frames from {args.port}")
+    print("Sensor count is auto-detected from live frames; LUT entries must match it.")
     print("Press Ctrl-C to stop.")
 
     try:
@@ -238,10 +272,8 @@ def main() -> int:
                         f"pos={result['position_label']:<13s} "
                         f"score={result['score']:.6g} "
                         f"margin={result['margin']:.6g} "
-                        f"H2=[{h2_g2[0]:.4f},{h2_g2[1]:.4f},"
-                        f"{h2_g2[2]:.4f},{h2_g2[3]:.4f}] "
-                        f"F=[{ratios[0]:.3f},{ratios[1]:.3f},"
-                        f"{ratios[2]:.3f},{ratios[3]:.3f}]"
+                        f"H2=[{format_series(h2_g2, 4)}] "
+                        f"F=[{format_series(ratios, 3)}]"
                     )
                     last_print = now
 
