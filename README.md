@@ -138,13 +138,19 @@ Collect a LUT from one selected excitation frequency:
 python3 src_python/collect_h2_lut.py COM5 --frequency 75 --output h75_lut.csv --key-names K0,K1,K2,K3,K4
 ```
 
-During collection, the script prompts for each key and each sample position. Move the electromagnet/finger to the requested key location, hold it still, then press Enter to collect that LUT entry.
+During collection, the script prompts for each key and each sample position. Each key is sampled at three centered points along the 4 cm key height: `top`, `middle`, and `bottom`. Move the electromagnet/finger to the requested key location, hold it still, then press Enter to collect that LUT entry.
 The script auto-detects whether the FPGA is sending three or four sensor values and records that in the CSV `sensor_count` column.
 
 After collecting the LUT, classify live UART data:
 
 ```bash
 python3 src_python/classify_h2_lut.py COM5 --frequency 75 --lut h75_lut.csv
+```
+
+To show a simple live key animation:
+
+```bash
+python3 src_python/animate_h2_keys.py COM5 --frequency 75 --lut h75_lut.csv
 ```
 
 Useful classifier options:

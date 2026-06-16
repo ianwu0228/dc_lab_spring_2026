@@ -106,18 +106,12 @@ def default_key_names(count: int):
 
 
 def build_positions():
-    # Key dimensions are 2 cm x 4 cm. These coordinates are local to each key:
-    # x is across the key width, y is from front/player side toward the back.
+    # Key dimensions are 2 cm x 4 cm. Keep x centered and sample three y
+    # locations from top to bottom along the key height.
     return [
-        ("left-front", -0.7, 0.7),
-        ("center-front", 0.0, 0.7),
-        ("right-front", 0.7, 0.7),
-        ("left-middle", -0.7, 2.0),
-        ("center-middle", 0.0, 2.0),
-        ("right-middle", 0.7, 2.0),
-        ("left-back", -0.7, 3.3),
-        ("center-back", 0.0, 3.3),
-        ("right-back", 0.7, 3.3),
+        ("top", 0.0, 0.7),
+        ("middle", 0.0, 2.0),
+        ("bottom", 0.0, 3.3),
     ]
 
 
