@@ -147,6 +147,12 @@ After collecting the LUT, classify live UART data:
 python3 src_python/classify_h2_lut.py COM5 --frequency 75 --lut h75_lut.csv
 ```
 
+To classify both 75 Hz and 45 Hz components from the same UART stream:
+
+```bash
+python3 src_python/classify_h2_lut.py COM5 --frequency both --lut-75 h75_lut.csv --lut-45 h45_lut.csv
+```
+
 To show a simple live key animation:
 
 ```bash
