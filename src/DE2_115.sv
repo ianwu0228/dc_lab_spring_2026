@@ -219,6 +219,8 @@ wire        stepper_dir;
 wire        stepper_enable_n;
 wire        stepper_busy;
 wire        stepper_done_pulse;
+wire [1:0]  press_button_raw;
+wire [1:0]  press_button_debounced;
 wire        auto_stepper_move_pulse;
 wire        auto_stepper_dir;
 wire        auto_tracking_enable = SW[14];
@@ -273,6 +275,33 @@ assign qmc_dbg_ack_error_latched[3] = 1'b0;
 assign GPIO[8]  = stepper_step;
 assign GPIO[9]  = stepper_dir;
 assign GPIO[10] = stepper_enable_n;
+
+// External active-high note press buttons.
+// GPIO[11] -> press state for the 75 Hz tracked note.
+// GPIO[12] -> press state for the 45 Hz tracked note.
+assign GPIO[11] = 1'bz;
+assign GPIO[12] = 1'bz;
+assign press_button_raw = {GPIO[12], GPIO[11]};
+
+button_debouncer #(
+    .CLK_HZ      (50_000_000),
+    .DEBOUNCE_MS (10)
+) u_press_button0_debouncer (
+    .clk   (CLOCK_50),
+    .rst_n (key3down),
+    .noisy (press_button_raw[0]),
+    .clean (press_button_debounced[0])
+);
+
+button_debouncer #(
+    .CLK_HZ      (50_000_000),
+    .DEBOUNCE_MS (10)
+) u_press_button1_debouncer (
+    .clk   (CLOCK_50),
+    .rst_n (key3down),
+    .noisy (press_button_raw[1]),
+    .clean (press_button_debounced[1])
+);
 
 stepper_drv8825_controller #(
     .CLK_HZ           (50_000_000),
@@ -669,6 +698,10 @@ wire        [31:0] vga_sensor3_magnitude_squared_gauss_q16;
 wire        [31:0] vga_sensor1_magnitude_squared_45hz_gauss_q16;
 wire        [31:0] vga_sensor2_magnitude_squared_45hz_gauss_q16;
 wire        [31:0] vga_sensor3_magnitude_squared_45hz_gauss_q16;
+wire [4:0] h75_global_key =
+    platform_center_key + {2'b00, h75_classifier_key} - 5'd2;
+wire [4:0] h45_global_key =
+    platform_center_key + {2'b00, h45_classifier_key} - 5'd2;
 
 // =====================================================================
 // RS232 UART stream for LUT construction: three-sensor H2 at 75 Hz and 45 Hz
@@ -683,6 +716,9 @@ mag_uart_streamer u_mag_uart_streamer (
     .h45_s1_q16 (vga_sensor1_magnitude_squared_45hz_gauss_q16),
     .h45_s2_q16 (vga_sensor2_magnitude_squared_45hz_gauss_q16),
     .h45_s3_q16 (vga_sensor3_magnitude_squared_45hz_gauss_q16),
+    .key75_global (h75_global_key),
+    .key45_global (h45_global_key),
+    .press_buttons (press_button_debounced),
     .uart_txd   (UART_TXD)
 );
 

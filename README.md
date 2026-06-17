@@ -55,11 +55,30 @@ Important:
 - Ensure `SLEEP` and `RESET` are high on the DRV8825 carrier board.
 - Set the DRV8825 current limit before long tests.
 
+### Piano Press Buttons
+
+The two external press buttons are active-high digital inputs. Each button module should share ground with the DE2-115 and must output 3.3 V logic to the FPGA signal pin.
+
+| Button | DE2 GPIO | FPGA Pin | Meaning |
+| --- | --- | --- | --- |
+| Button 0 signal | GPIO[11] | PIN_AF16 | Press state for the 75 Hz tracked note |
+| Button 1 signal | GPIO[12] | PIN_AD19 | Press state for the 45 Hz tracked note |
+
+Required wiring per button:
+
+```text
+Button VDD    -> 3.3 V
+Button GND    -> DE2 GND
+Button SIGNAL -> assigned GPIO input
+```
+
+The FPGA debounces these inputs for `10 ms` before sending them to the PC.
+
 ## Board Interfaces
 
 | Interface | Signal(s) | Usage |
 | --- | --- | --- |
-| RS232 | `UART_TXD` | Streams `H2,75,...,45,...` frames to PC |
+| RS232 | `UART_TXD` | Streams `H2,75,...,45,...` and `KEY,75,xx,p75,45,yy,p45` frames to PC |
 | VGA | `VGA_R/G/B`, `VGA_HS`, `VGA_VS`, `VGA_CLK` | Displays sensor values and `H75/H45` |
 | LCD | `LCD_DATA`, `LCD_RS`, `LCD_RW`, `LCD_EN` | Displays selected axis value |
 | HEX7 | `HEX7` | Displays selected sensor number 1-3 |
@@ -113,16 +132,37 @@ For a first hardware test, keep `SW[17] = 0`, power the motor driver, then enabl
 | LEDG[8] | Continuous stepper run command active |
 | LEDR[17:0] | Selected-axis magnitude bar |
 
-## UART H2 Frame
+## UART Frames
 
-The FPGA sends one compact ASCII frame per UART update. The current FPGA build sends the three-sensor frame; the Python tools can still parse older four-sensor logs.
+The FPGA sends compact ASCII UART frames. The current FPGA build alternates between the three-sensor H2 frame and a key/press frame. The Python H2 tools ignore non-H2 lines, so the extra key frame does not break LUT collection or plotting.
 
 ```text
 H2,75,H75S1,H75S2,H75S3,45,H45S1,H45S2,H45S3
 H2,75,H75S1,H75S2,H75S3,H75S4,45,H45S1,H45S2,H45S3,H45S4
+KEY,75,KEY75,PRESS75,45,KEY45,PRESS45
 ```
 
-Each value is unsigned 32-bit Q16 hex, representing `H^2` in Gauss squared with Q16 scaling.
+Each H2 value is unsigned 32-bit Q16 hex, representing `H^2` in Gauss squared with Q16 scaling. `KEY75` and `KEY45` are two-digit decimal global key indices, `00` through `14`. `PRESS75` and `PRESS45` are debounced active-high button states, `0` or `1`.
+
+To read only the FPGA key and press state on the PC:
+
+```bash
+python3 src_python/read_key_uart.py COM5
+```
+
+To map global keys to note names:
+
+```bash
+python3 src_python/read_key_uart.py COM5 --notes F3,G3,A3,B3,C4,D4,E4,F4,G4,A4,B4,C5,D5,E5
+```
+
+To show a live piano-key window and play simple synthesized tones when the press buttons are active:
+
+```bash
+python3 src_python/piano_key_monitor.py COM5 --notes F3,G3,A3,B3,C4,D4,E4,F4,G4,A4,B4,C5,D5,E5
+```
+
+The FPGA reports global key indices `0..14`. The software maps key `0` to the first note in the list, key `1` to the second note, and so on. If a reported key is outside the provided note list, the PC displays `OUT`.
 
 ## Python LUT and Classification Workflow
 

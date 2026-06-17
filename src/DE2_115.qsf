@@ -57,6 +57,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE lcd_ctrl.sv
 set_global_assignment -name SYSTEMVERILOG_FILE uart_tx.sv
 set_global_assignment -name SYSTEMVERILOG_FILE mag_uart_streamer.sv
 set_global_assignment -name SYSTEMVERILOG_FILE stepper_drv8825_controller.sv
+set_global_assignment -name SYSTEMVERILOG_FILE button_debouncer.sv
 set_global_assignment -name SYSTEMVERILOG_FILE h2_lut_classifier_3sensor.sv
 set_global_assignment -name SYSTEMVERILOG_FILE platform_tracker_controller.sv
 set_global_assignment -name SYSTEMVERILOG_FILE vga_timing_640x480.sv
