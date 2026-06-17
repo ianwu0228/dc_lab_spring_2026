@@ -905,6 +905,14 @@ wire [31:0] h45_total_q16 =
     vga_sensor1_magnitude_squared_45hz_gauss_q16 +
     vga_sensor2_magnitude_squared_45hz_gauss_q16 +
     vga_sensor3_magnitude_squared_45hz_gauss_q16;
+wire        h75_average_valid;
+wire [31:0] h75_avg_s1_q16;
+wire [31:0] h75_avg_s2_q16;
+wire [31:0] h75_avg_s3_q16;
+wire        h45_average_valid;
+wire [31:0] h45_avg_s1_q16;
+wire [31:0] h45_avg_s2_q16;
+wire [31:0] h45_avg_s3_q16;
 
 reg [2:0] h75_classifier_result_seen;
 reg [2:0] h45_classifier_result_seen;
@@ -946,6 +954,36 @@ always @(posedge CLOCK_50 or negedge key3down) begin
     end
 end
 
+h2_average_3sensor #(
+    .AVERAGE_SAMPLES (10)
+) u_h75_classifier_average (
+    .clk          (CLOCK_50),
+    .rst_n        (key3down),
+    .sample_valid (h75_classifier_start),
+    .h2_s1_q16    (vga_sensor1_magnitude_squared_gauss_q16),
+    .h2_s2_q16    (vga_sensor2_magnitude_squared_gauss_q16),
+    .h2_s3_q16    (vga_sensor3_magnitude_squared_gauss_q16),
+    .valid        (h75_average_valid),
+    .avg_s1_q16   (h75_avg_s1_q16),
+    .avg_s2_q16   (h75_avg_s2_q16),
+    .avg_s3_q16   (h75_avg_s3_q16)
+);
+
+h2_average_3sensor #(
+    .AVERAGE_SAMPLES (10)
+) u_h45_classifier_average (
+    .clk          (CLOCK_50),
+    .rst_n        (key3down),
+    .sample_valid (h45_classifier_start),
+    .h2_s1_q16    (vga_sensor1_magnitude_squared_45hz_gauss_q16),
+    .h2_s2_q16    (vga_sensor2_magnitude_squared_45hz_gauss_q16),
+    .h2_s3_q16    (vga_sensor3_magnitude_squared_45hz_gauss_q16),
+    .valid        (h45_average_valid),
+    .avg_s1_q16   (h45_avg_s1_q16),
+    .avg_s2_q16   (h45_avg_s2_q16),
+    .avg_s3_q16   (h45_avg_s3_q16)
+);
+
 h2_lut_classifier_3sensor #(
     .LUT_ENTRIES (45),
     .KEY_COUNT   (5),
@@ -953,10 +991,10 @@ h2_lut_classifier_3sensor #(
 ) u_h75_lut_classifier (
     .clk       (CLOCK_50),
     .rst_n     (key3down),
-    .start     (h75_classifier_start),
-    .h2_s1_q16 (vga_sensor1_magnitude_squared_gauss_q16),
-    .h2_s2_q16 (vga_sensor2_magnitude_squared_gauss_q16),
-    .h2_s3_q16 (vga_sensor3_magnitude_squared_gauss_q16),
+    .start     (h75_average_valid),
+    .h2_s1_q16 (h75_avg_s1_q16),
+    .h2_s2_q16 (h75_avg_s2_q16),
+    .h2_s3_q16 (h75_avg_s3_q16),
     .busy      (h75_classifier_busy),
     .valid     (h75_classifier_valid),
     .key_id    (h75_classifier_key),
@@ -970,10 +1008,10 @@ h2_lut_classifier_3sensor #(
 ) u_h45_lut_classifier (
     .clk       (CLOCK_50),
     .rst_n     (key3down),
-    .start     (h45_classifier_start),
-    .h2_s1_q16 (vga_sensor1_magnitude_squared_45hz_gauss_q16),
-    .h2_s2_q16 (vga_sensor2_magnitude_squared_45hz_gauss_q16),
-    .h2_s3_q16 (vga_sensor3_magnitude_squared_45hz_gauss_q16),
+    .start     (h45_average_valid),
+    .h2_s1_q16 (h45_avg_s1_q16),
+    .h2_s2_q16 (h45_avg_s2_q16),
+    .h2_s3_q16 (h45_avg_s3_q16),
     .busy      (h45_classifier_busy),
     .valid     (h45_classifier_valid),
     .key_id    (h45_classifier_key),

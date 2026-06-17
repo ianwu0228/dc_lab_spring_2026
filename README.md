@@ -345,14 +345,26 @@ python3 src_python/export_lut_mem.py src_python/h75_lut.csv src/h75_lut_3sensor.
 python3 src_python/export_lut_mem.py src_python/h45_lut.csv src/h45_lut_3sensor.mem --frequency 45
 ```
 
-The hardware classifier uses the same normalized-pattern idea as the Python classifier, but avoids division by cross-multiplication:
+The exported ROM stores the same features used by `src_python/classify_h2_lut.py`:
 
 ```text
-error_i = live_i * lut_total - lut_i * live_total
-entry_error = error_1^2 + error_2^2 + error_3^2
+f1 = H2_sensor1 / (H2_sensor1 + H2_sensor2 + H2_sensor3)
+f2 = H2_sensor2 / (H2_sensor1 + H2_sensor2 + H2_sensor3)
+f3 = H2_sensor3 / (H2_sensor1 + H2_sensor2 + H2_sensor3)
+strength = ln(H2_sensor1 + H2_sensor2 + H2_sensor3)
 ```
 
-For each key, the classifier keeps the minimum entry error among all sampled points and z layers, then reports the key with the lowest score. The current FPGA classifier is for the three-sensor build.
+Before classification, the FPGA averages the latest 10 complete H2 frames for each frequency, matching the Python default `--average 10`.
+
+The FPGA classifier then uses the Python default scoring method:
+
+```text
+ratio_error = (live_f1 - lut_f1)^2 + (live_f2 - lut_f2)^2 + (live_f3 - lut_f3)^2
+strength_error = (ln(live_total_H2) - ln(lut_total_H2))^2
+entry_score = ratio_error + 0.05 * strength_error
+```
+
+For each key, the classifier keeps the minimum entry score among all sampled points and z layers, then reports the key with the lowest score. The current FPGA classifier is for the three-sensor build.
 
 FPGA stepper controls:
 
