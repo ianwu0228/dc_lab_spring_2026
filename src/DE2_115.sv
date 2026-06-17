@@ -219,6 +219,29 @@ wire        stepper_dir;
 wire        stepper_enable_n;
 wire        stepper_busy;
 wire        stepper_done_pulse;
+wire        auto_stepper_move_pulse;
+wire        auto_stepper_dir;
+wire        auto_tracking_enable = SW[14];
+wire        stepper_enable_cmd = SW[17];
+wire        stepper_dir_cmd = auto_tracking_enable ? auto_stepper_dir : SW[16];
+wire        stepper_continuous_cmd = auto_tracking_enable ? 1'b0 : SW[15];
+wire        stepper_move_cmd =
+    auto_tracking_enable ? auto_stepper_move_pulse : stepper_move_pulse;
+wire        h75_classifier_valid;
+wire [2:0]  h75_classifier_key;
+wire        h75_classifier_busy;
+wire [71:0] h75_classifier_score;
+wire        h45_classifier_valid;
+wire [2:0]  h45_classifier_key;
+wire        h45_classifier_busy;
+wire [71:0] h45_classifier_score;
+wire [4:0]  platform_center_key;
+wire signed [4:0] platform_local75_index;
+wire signed [4:0] platform_local45_index;
+wire signed [5:0] platform_center_sum;
+wire signed [1:0] platform_move_request;
+wire [2:0]  platform_stable_count;
+wire [2:0]  platform_block_reason;
 
 assign GPIO[0] = qmc_scl[0];
 assign GPIO[1] = (qmc_sda_dir[0] && (qmc_sda_out[0] == 1'b0)) ? 1'b0 : 1'bz;
@@ -253,16 +276,16 @@ assign GPIO[10] = stepper_enable_n;
 
 stepper_drv8825_controller #(
     .CLK_HZ           (50_000_000),
-    .STEP_RATE_HZ     (100),
+    .STEP_RATE_HZ     (800),
     .STEP_PULSE_US    (5),
-    .FIXED_MOVE_STEPS (200)
+    .FIXED_MOVE_STEPS (100)
 ) u_stepper_drv8825_controller (
     .clk            (CLOCK_50),
     .rst_n          (key3down),
-    .enable         (SW[17]),
-    .dir_cmd        (SW[16]),
-    .continuous_run (SW[15]),
-    .move_pulse     (stepper_move_pulse),
+    .enable         (stepper_enable_cmd),
+    .dir_cmd        (stepper_dir_cmd),
+    .continuous_run (stepper_continuous_cmd),
+    .move_pulse     (stepper_move_cmd),
     .drv_step       (stepper_step),
     .drv_dir        (stepper_dir),
     .drv_enable_n   (stepper_enable_n),
@@ -437,19 +460,21 @@ mag_calibrator u_calibrator_3 (
 // =====================================================================
 // KEY[0]     = restart calibration collection.
 // KEY[1]     = finish collection and calculate coefficients.
-// KEY[2]     = move stepper by 200 steps.
+// KEY[2]     = manual move stepper by 100 steps when SW[14] is 0.
 // SW[4]      = display calibrated values after calculation is complete.
 // SW[3:2]    = selected sensor: 00, 01, 10 select sensors 1, 2, 3.
 // SW[1:0]    = selected axis: 00, 01, 10 select X, Y, Z.
 // SW[17]     = enable DRV8825 output, active high at switch.
-// SW[16]     = DRV8825 direction.
-// SW[15]     = continuously step while enabled.
+// SW[16]     = manual DRV8825 direction when SW[14] is 0.
+// SW[15]     = manual continuous stepper run when SW[14] is 0.
+// SW[14]     = enable FPGA LUT classifier platform tracking.
+// SW[13]     = direction level that corresponds to moving the platform right.
 // LEDG[0]    = all active sensors initialized successfully.
 // LEDG[3:1]  = calibration collecting, calculating, done.
 // LEDG[5]    = calibration rejected because one or more axes lacked coverage.
 // LEDG[6]    = stepper controller busy.
 // LEDG[7]    = DRV8825 enabled.
-// LEDG[8]    = continuous stepper run command active.
+// LEDG[8]    = FPGA auto platform tracking enabled.
 // LEDR[17:0] = absolute selected-axis field strength relative to configured range.
 logic signed [15:0] selected_mag_x, selected_mag_y, selected_mag_z;
 logic signed [15:0] selected_cal_mag_x, selected_cal_mag_y, selected_cal_mag_z;
@@ -500,7 +525,7 @@ assign LEDG[4]   = carrier_result_valid;
 assign LEDG[5]   = calibration_error;
 assign LEDG[6]   = stepper_busy;
 assign LEDG[7]   = ~stepper_enable_n;
-assign LEDG[8]   = SW[15];
+assign LEDG[8]   = auto_tracking_enable;
 
 // =====================================================================
 // 觀察與驗證機制：SW[3:2] 選擇感測器，SW[1:0] 選擇 X, Y, Z 軸
@@ -834,6 +859,122 @@ mag_lockin_vector_75hz #(
     .cosine_q15                    (carrier45_cosine_q15),
     .carrier_l2_squared_gauss_q16  (vga_sensor3_magnitude_squared_45hz_gauss_q16),
     .result_valid                  (carrier45_sensor_result_valid[2])
+);
+
+wire [31:0] h75_total_q16 =
+    vga_sensor1_magnitude_squared_gauss_q16 +
+    vga_sensor2_magnitude_squared_gauss_q16 +
+    vga_sensor3_magnitude_squared_gauss_q16;
+wire [31:0] h45_total_q16 =
+    vga_sensor1_magnitude_squared_45hz_gauss_q16 +
+    vga_sensor2_magnitude_squared_45hz_gauss_q16 +
+    vga_sensor3_magnitude_squared_45hz_gauss_q16;
+
+reg [2:0] h75_classifier_result_seen;
+reg [2:0] h45_classifier_result_seen;
+reg       h75_classifier_start;
+reg       h45_classifier_start;
+
+wire [2:0] h75_classifier_seen_next =
+    h75_classifier_result_seen | carrier_sensor_result_valid;
+wire [2:0] h45_classifier_seen_next =
+    h45_classifier_result_seen | carrier45_sensor_result_valid;
+
+always @(posedge CLOCK_50 or negedge key3down) begin
+    if (!key3down) begin
+        h75_classifier_result_seen <= 3'd0;
+        h45_classifier_result_seen <= 3'd0;
+        h75_classifier_start <= 1'b0;
+        h45_classifier_start <= 1'b0;
+    end else begin
+        h75_classifier_start <= 1'b0;
+        h45_classifier_start <= 1'b0;
+
+        if (!h75_classifier_busy) begin
+            if (h75_classifier_seen_next == 3'b111) begin
+                h75_classifier_start <= 1'b1;
+                h75_classifier_result_seen <= 3'd0;
+            end else begin
+                h75_classifier_result_seen <= h75_classifier_seen_next;
+            end
+        end
+
+        if (!h45_classifier_busy) begin
+            if (h45_classifier_seen_next == 3'b111) begin
+                h45_classifier_start <= 1'b1;
+                h45_classifier_result_seen <= 3'd0;
+            end else begin
+                h45_classifier_result_seen <= h45_classifier_seen_next;
+            end
+        end
+    end
+end
+
+h2_lut_classifier_3sensor #(
+    .LUT_ENTRIES (45),
+    .KEY_COUNT   (5),
+    .LUT_FILE    ("h75_lut_3sensor.mem")
+) u_h75_lut_classifier (
+    .clk       (CLOCK_50),
+    .rst_n     (key3down),
+    .start     (h75_classifier_start),
+    .h2_s1_q16 (vga_sensor1_magnitude_squared_gauss_q16),
+    .h2_s2_q16 (vga_sensor2_magnitude_squared_gauss_q16),
+    .h2_s3_q16 (vga_sensor3_magnitude_squared_gauss_q16),
+    .busy      (h75_classifier_busy),
+    .valid     (h75_classifier_valid),
+    .key_id    (h75_classifier_key),
+    .score     (h75_classifier_score)
+);
+
+h2_lut_classifier_3sensor #(
+    .LUT_ENTRIES (45),
+    .KEY_COUNT   (5),
+    .LUT_FILE    ("h45_lut_3sensor.mem")
+) u_h45_lut_classifier (
+    .clk       (CLOCK_50),
+    .rst_n     (key3down),
+    .start     (h45_classifier_start),
+    .h2_s1_q16 (vga_sensor1_magnitude_squared_45hz_gauss_q16),
+    .h2_s2_q16 (vga_sensor2_magnitude_squared_45hz_gauss_q16),
+    .h2_s3_q16 (vga_sensor3_magnitude_squared_45hz_gauss_q16),
+    .busy      (h45_classifier_busy),
+    .valid     (h45_classifier_valid),
+    .key_id    (h45_classifier_key),
+    .score     (h45_classifier_score)
+);
+
+platform_tracker_controller #(
+    .CLK_HZ              (50_000_000),
+    .INITIAL_CENTER_KEY  (12),
+    .MIN_CENTER_KEY      (2),
+    .MAX_CENTER_KEY      (12),
+    .LOCAL_CENTER_KEY_ID (2),
+    .STABLE_COUNT        (3),
+    .COOLDOWN_MS         (100),
+    .MIN_TOTAL_Q16       (0)
+) u_platform_tracker_controller (
+    .clk                 (CLOCK_50),
+    .rst_n               (key3down),
+    .enable              (auto_tracking_enable && SW[17]),
+    .key75_valid         (h75_classifier_valid),
+    .key75_id            (h75_classifier_key),
+    .h75_total_q16       (h75_total_q16),
+    .key45_valid         (h45_classifier_valid),
+    .key45_id            (h45_classifier_key),
+    .h45_total_q16       (h45_total_q16),
+    .right_dir_level     (SW[13]),
+    .stepper_busy        (stepper_busy),
+    .stepper_done_pulse  (stepper_done_pulse),
+    .move_pulse          (auto_stepper_move_pulse),
+    .dir_cmd             (auto_stepper_dir),
+    .platform_center_key (platform_center_key),
+    .local75_index       (platform_local75_index),
+    .local45_index       (platform_local45_index),
+    .center_sum          (platform_center_sum),
+    .move_request        (platform_move_request),
+    .stable_count        (platform_stable_count),
+    .debug_block_reason  (platform_block_reason)
 );
 
 vga_timing_640x480 u_vga_timing (

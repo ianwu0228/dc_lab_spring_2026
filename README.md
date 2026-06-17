@@ -276,3 +276,72 @@ python3 src_python/track_platform_stepper.py COM5 COM6 --lut-75 h75_lut.csv --lu
 - `--min-center-key 2` and `--max-center-key 12` clamp the allowed platform travel.
 - `--steps-per-key 100` sets the motor distance for one key shift.
 - `--enable-motor` is required before any Arduino command is actually sent.
+
+## FPGA LUT Classification and Direct Stepper Control
+
+The current HDL can also perform the live classification and platform movement directly on the FPGA, without Python in the runtime loop.
+
+Runtime data path:
+
+```text
+QMC sensors
+-> FPGA 75 Hz / 45 Hz H2 extraction
+-> FPGA LUT classifiers
+-> FPGA platform tracker
+-> GPIO[8:10] directly drive DRV8825 STEP/DIR/ENABLE_N
+```
+
+The FPGA LUT ROM files are:
+
+```text
+src/h75_lut_3sensor.mem
+src/h45_lut_3sensor.mem
+```
+
+They are generated from the collected CSV LUTs. After recollecting a LUT, regenerate the ROM contents before compiling Quartus:
+
+```bash
+python3 src_python/export_lut_mem.py src_python/h75_lut.csv src/h75_lut_3sensor.mem --frequency 75
+python3 src_python/export_lut_mem.py src_python/h45_lut.csv src/h45_lut_3sensor.mem --frequency 45
+```
+
+The hardware classifier uses the same normalized-pattern idea as the Python classifier, but avoids division by cross-multiplication:
+
+```text
+error_i = live_i * lut_total - lut_i * live_total
+entry_error = error_1^2 + error_2^2 + error_3^2
+```
+
+For each key, the classifier keeps the minimum entry error among all sampled points and z layers, then reports the key with the lowest score. The current FPGA classifier is for the three-sensor build.
+
+FPGA stepper controls:
+
+```text
+GPIO[8]  -> DRV8825 STEP
+GPIO[9]  -> DRV8825 DIR
+GPIO[10] -> DRV8825 ENABLE_N / nENBL
+```
+
+Switches:
+
+- `SW[17]`: master stepper enable.
+- `SW[14]`: enable FPGA automatic platform tracking.
+- `SW[13]`: direction level that means "move platform right"; flip this if left/right motion is reversed.
+- `SW[16]`: manual direction when `SW[14]=0`.
+- `SW[15]`: manual continuous stepping when `SW[14]=0`.
+- `KEY[2]`: manual one-key move when `SW[14]=0`.
+
+The FPGA automatic platform tracker uses the same rule as the Python prototype:
+
+```text
+K0 K1 K2 K3 K4
+-2 -1  0 +1 +2
+
+local_center_sum = local_75Hz + local_45Hz
+
+if local_center_sum <= -2: move left  one key = 100 steps
+if local_center_sum >= +2: move right one key = 100 steps
+otherwise: stay
+```
+
+The platform center starts at global key `12` and is clamped to global keys `2..12`. The step generator is set to `800 steps/s`, `100 steps` per one-key move, and a `5 us` STEP high pulse.

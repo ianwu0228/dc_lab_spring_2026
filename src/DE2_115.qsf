@@ -57,11 +57,15 @@ set_global_assignment -name SYSTEMVERILOG_FILE lcd_ctrl.sv
 set_global_assignment -name SYSTEMVERILOG_FILE uart_tx.sv
 set_global_assignment -name SYSTEMVERILOG_FILE mag_uart_streamer.sv
 set_global_assignment -name SYSTEMVERILOG_FILE stepper_drv8825_controller.sv
+set_global_assignment -name SYSTEMVERILOG_FILE h2_lut_classifier_3sensor.sv
+set_global_assignment -name SYSTEMVERILOG_FILE platform_tracker_controller.sv
 set_global_assignment -name SYSTEMVERILOG_FILE vga_timing_640x480.sv
 set_global_assignment -name SYSTEMVERILOG_FILE vga_font_rom.sv
 set_global_assignment -name SYSTEMVERILOG_FILE vga_sensor1_dashboard.sv
 set_global_assignment -name SYSTEMVERILOG_FILE HexTo7Seg.sv
 set_global_assignment -name SYSTEMVERILOG_FILE Debounce.sv
+set_global_assignment -name MISC_FILE h75_lut_3sensor.mem
+set_global_assignment -name MISC_FILE h45_lut_3sensor.mem
 set_global_assignment -name SYSTEMVERILOG_FILE DE2_115.sv
 set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
 set_global_assignment -name MIN_CORE_JUNCTION_TEMP 0
