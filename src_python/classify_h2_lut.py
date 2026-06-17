@@ -89,6 +89,19 @@ def infer_sensor_count(row):
     return 4 if s4_value else 3
 
 
+def infer_z_layer(row):
+    try:
+        z_layer_id = int(row.get("z_layer_id", ""))
+    except (TypeError, ValueError):
+        z_layer_id = 0
+
+    z_layer_name = row.get("z_layer_name", "")
+    if not z_layer_name:
+        z_layer_name = "press" if z_layer_id == 0 else f"z{z_layer_id}"
+
+    return z_layer_id, z_layer_name
+
+
 def load_lut(path, frequency):
     entries = []
     with open(path, newline="", encoding="utf-8") as csv_file:
@@ -98,6 +111,7 @@ def load_lut(path, frequency):
                 continue
 
             sensor_count = infer_sensor_count(row)
+            z_layer_id, z_layer_name = infer_z_layer(row)
             h2 = [
                 float(row[f"h2_s{index}_q16"])
                 for index in range(1, sensor_count + 1)
@@ -119,6 +133,8 @@ def load_lut(path, frequency):
                     "key_id": int(row["key_id"]),
                     "key_name": row.get("key_name", str(row["key_id"])),
                     "position_label": row.get("position_label", ""),
+                    "z_layer_id": z_layer_id,
+                    "z_layer_name": z_layer_name,
                     "sensor_count": sensor_count,
                     "ratios": ratios,
                     "total_q16": max(total, 1.0),
@@ -146,25 +162,66 @@ def score_entry(ratios, total_q16, entry, strength_weight):
     return ratio_error + strength_weight * strength_error
 
 
-def classify(values, entries, strength_weight):
+def combine_key_errors(errors, key_score_mode):
+    if key_score_mode == "sum":
+        return sum(errors)
+    if key_score_mode == "min":
+        return min(errors)
+    raise ValueError(f"Unsupported key score mode: {key_score_mode}")
+
+
+def parse_z_layers(z_layers_text):
+    layers = []
+    for part in z_layers_text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        layers.append(int(part))
+
+    if not layers:
+        raise ValueError("--z-layers must include at least one layer id")
+
+    return set(layers)
+
+
+def classify(values, entries, strength_weight, key_score_mode="min", z_layers=None):
+    if z_layers is None:
+        z_layers = {0}
+
     matching_entries = [
         entry for entry in entries
         if entry["sensor_count"] == len(values)
+        and entry["z_layer_id"] in z_layers
     ]
     if not matching_entries:
         raise ValueError(
-            f"LUT has no entries for {len(values)}-sensor frames. "
-            "Collect a matching LUT or use the matching FPGA sensor mode."
+            f"LUT has no entries for {len(values)}-sensor frames "
+            f"and z layers {sorted(z_layers)}. Collect a matching LUT "
+            "or use matching --z-layers/FPGA sensor mode."
         )
 
     ratios, total_q16 = ratios_from_h2(values)
-    scored = [
-        (score_entry(ratios, total_q16, entry, strength_weight), entry)
-        for entry in matching_entries
-    ]
+    key_groups = {}
+    for entry in matching_entries:
+        key_groups.setdefault(entry["key_id"], []).append(entry)
+
+    scored = []
+    for key_id, key_entries in key_groups.items():
+        entry_errors = [
+            (score_entry(ratios, total_q16, entry, strength_weight), entry)
+            for entry in key_entries
+        ]
+        entry_errors.sort(key=lambda item: item[0])
+        key_score = combine_key_errors(
+            [error for error, _entry in entry_errors],
+            key_score_mode,
+        )
+        representative_entry = entry_errors[0][1]
+        scored.append((key_score, representative_entry, entry_errors))
+
     scored.sort(key=lambda item: item[0])
 
-    best_score, best_entry = scored[0]
+    best_score, best_entry, best_entry_errors = scored[0]
     second_score = scored[1][0] if len(scored) > 1 else float("inf")
     margin = second_score - best_score
 
@@ -172,13 +229,17 @@ def classify(values, entries, strength_weight):
         "key_id": best_entry["key_id"],
         "key_name": best_entry["key_name"],
         "position_label": best_entry["position_label"],
+        "z_layer_id": best_entry["z_layer_id"],
+        "z_layer_name": best_entry["z_layer_name"],
         "score": best_score,
+        "nearest_sample_score": best_entry_errors[0][0],
         "second_score": second_score,
         "margin": margin,
         "ratios": ratios,
         "total_q16": total_q16,
         "h2_g2": [value / 65536.0 for value in values],
         "total_g2": total_q16 / 65536.0,
+        "key_score_mode": key_score_mode,
     }
 
 
@@ -219,8 +280,10 @@ def format_result_line(frequency, result, stable_text):
         f"{frequency}Hz "
         f"key={result['key_name']:>4s} "
         f"stable={stable_text:>8s} "
+        f"z={result['z_layer_name']:<9s} "
         f"pos={result['position_label']:<8s} "
         f"score={result['score']:.6g} "
+        f"near={result['nearest_sample_score']:.6g} "
         f"margin={result['margin']:.6g} "
         f"H2=[{format_series(result['h2_g2'], 4)}] "
         f"F=[{format_series(result['ratios'], 3)}]"
@@ -265,6 +328,17 @@ def main() -> int:
         help="Weight for log(total H2) error. Use 0 to classify only by normalized pattern.",
     )
     parser.add_argument(
+        "--key-score",
+        choices=["sum", "min"],
+        default="min",
+        help="How to combine per-sample errors into a per-key score.",
+    )
+    parser.add_argument(
+        "--z-layers",
+        default="0",
+        help="Comma-separated z layer ids to use, e.g. 0 for press or 1,2 for hover.",
+    )
+    parser.add_argument(
         "--min-total-g2",
         type=float,
         default=0.0,
@@ -273,6 +347,7 @@ def main() -> int:
     args = parser.parse_args()
 
     frequencies = ["75", "45"] if args.frequency == "both" else [args.frequency]
+    z_layers = parse_z_layers(args.z_layers)
     entries_by_frequency = {}
     for frequency in frequencies:
         lut_path = resolve_lut_path(args, frequency)
@@ -295,6 +370,7 @@ def main() -> int:
             f"for {frequency} Hz"
         )
     print(f"Classifying {', '.join(frequencies)} Hz H2 frames from {args.port}")
+    print(f"Using z layers: {sorted(z_layers)}")
     print("Sensor count is auto-detected from live frames; LUT entries must match it.")
     print("Press Ctrl-C to stop.")
 
@@ -320,6 +396,8 @@ def main() -> int:
                         values,
                         entries_by_frequency[frequency],
                         args.strength_weight,
+                        args.key_score,
+                        z_layers,
                     )
                     stable_text = stable_label(
                         result,

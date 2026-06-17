@@ -17,7 +17,7 @@ except ImportError:
     print("Missing dependency: pyserial. Install with: pip install pyserial", file=sys.stderr)
     raise
 
-from classify_h2_lut import average_samples, classify, load_lut, read_h2_frame
+from classify_h2_lut import average_samples, classify, load_lut, parse_z_layers, read_h2_frame
 
 
 def unique_key_names(entries):
@@ -109,6 +109,17 @@ def main() -> int:
     parser.add_argument("--average", type=int, default=10)
     parser.add_argument("--stable", type=int, default=3)
     parser.add_argument("--strength-weight", type=float, default=0.05)
+    parser.add_argument(
+        "--key-score",
+        choices=["sum", "min"],
+        default="min",
+        help="How to combine per-sample errors into a per-key score.",
+    )
+    parser.add_argument(
+        "--z-layers",
+        default="0",
+        help="Comma-separated z layer ids to use, e.g. 0 for press or 1,2 for hover.",
+    )
     parser.add_argument("--min-total-g2", type=float, default=0.0)
     parser.add_argument(
         "--refresh-hz",
@@ -119,6 +130,7 @@ def main() -> int:
     args = parser.parse_args()
 
     entries = load_lut(args.lut, args.frequency)
+    z_layers = parse_z_layers(args.z_layers)
     key_names = unique_key_names(entries)
     display = KeyboardDisplay(key_names)
     sample_window = deque(maxlen=max(1, args.average))
@@ -128,6 +140,7 @@ def main() -> int:
 
     print(f"Loaded {len(entries)} LUT entries from {args.lut}")
     print(f"Animating {args.frequency} Hz classifications from {args.port}")
+    print(f"Using z layers: {sorted(z_layers)}")
     print("Close the plot window or press Ctrl-C to stop.")
 
     try:
@@ -140,7 +153,13 @@ def main() -> int:
                     continue
 
                 values = average_samples(sample_window)
-                result = classify(values, entries, args.strength_weight)
+                result = classify(
+                    values,
+                    entries,
+                    args.strength_weight,
+                    args.key_score,
+                    z_layers,
+                )
 
                 if result["total_g2"] < args.min_total_g2:
                     key_history.clear()

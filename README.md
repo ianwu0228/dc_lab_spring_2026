@@ -132,31 +132,54 @@ Install the PC-side dependency first:
 pip install pyserial
 ```
 
-Collect a LUT from one selected excitation frequency:
+Collect a LUT from one selected excitation frequency. Each z layer is collected as a separate run, but all layers for the same frequency can be saved into the same CSV:
 
 ```bash
-python3 src_python/collect_h2_lut.py COM5 --frequency 75 --output h75_lut.csv --key-names K0,K1,K2,K3,K4
+python3 src_python/collect_h2_lut.py COM5 --frequency 75 --output h75_lut.csv --key-names K0,K1,K2,K3,K4 --z-layer-id 0 --z-layer-name press
+python3 src_python/collect_h2_lut.py COM5 --frequency 75 --output h75_lut.csv --key-names K0,K1,K2,K3,K4 --z-layer-id 1 --z-layer-name hover-low --append
+python3 src_python/collect_h2_lut.py COM5 --frequency 75 --output h75_lut.csv --key-names K0,K1,K2,K3,K4 --z-layer-id 2 --z-layer-name hover-high --append
 ```
 
-During collection, the script prompts for each key and each sample position. Each key is sampled at three centered points along the 4 cm key height: `top`, `middle`, and `bottom`. Move the electromagnet/finger to the requested key location, hold it still, then press Enter to collect that LUT entry.
+During collection, the script prompts for each key and each sample position. Each key is sampled at three centered vertical points: `top`, `middle`, and `bottom`. Move the electromagnet/finger to the requested point, hold it still, then press Enter to collect that LUT entry.
 The script auto-detects whether the FPGA is sending three or four sensor values and records that in the CSV `sensor_count` column.
+For five local keys, this produces `5 keys x 3 points x 3 z layers = 45` LUT entries per frequency.
 
-After collecting the LUT, classify live UART data:
+The intended z layers are:
+
+- `z_layer_id=0`, `press`: key plane, used later when the pressure sensor confirms a real press.
+- `z_layer_id=1`, `hover-low`: lower hover plane, used for platform tracking.
+- `z_layer_id=2`, `hover-high`: upper hover plane, used for platform tracking.
+
+After collecting the LUT, classify live UART data on the press plane:
 
 ```bash
-python3 src_python/classify_h2_lut.py COM5 --frequency 75 --lut h75_lut.csv
+python3 src_python/classify_h2_lut.py COM5 --frequency 75 --lut h75_lut.csv --z-layers 0
 ```
+
+Classify hover position for platform tracking using the two hover layers:
+
+```bash
+python3 src_python/classify_h2_lut.py COM5 --frequency 75 --lut h75_lut.csv --z-layers 1,2
+```
+
+Classify the key across both pressed and hovering heights using all three layers:
+
+```bash
+python3 src_python/classify_h2_lut.py COM5 --frequency 75 --lut h75_lut.csv --z-layers 0,1,2 --key-score min
+```
+
+This still reports only the key, for example `K0` through `K4`. The z layer is not treated as a separate class; it only provides extra LUT samples so the same key can be recognized when the finger is on the key plane or hovering above it.
 
 To classify both 75 Hz and 45 Hz components from the same UART stream:
 
 ```bash
-python3 src_python/classify_h2_lut.py COM5 --frequency both --lut-75 h75_lut.csv --lut-45 h45_lut.csv
+python3 src_python/classify_h2_lut.py COM5 --frequency both --lut-75 h75_lut.csv --lut-45 h45_lut.csv --z-layers 0,1,2
 ```
 
 To show a simple live key animation:
 
 ```bash
-python3 src_python/animate_h2_keys.py COM5 --frequency 75 --lut h75_lut.csv
+python3 src_python/animate_h2_keys.py COM5 --frequency 75 --lut h75_lut.csv --z-layers 0,1,2
 ```
 
 Useful classifier options:
@@ -168,7 +191,16 @@ python3 src_python/classify_h2_lut.py COM5 --frequency 75 --lut h75_lut.csv --av
 - `--average` controls how many recent H2 frames are averaged before scoring.
 - `--stable` controls how many consecutive same-key results are required before the `stable=` field reports the key.
 - `--strength-weight 0` classifies only by the normalized H2 pattern.
+- `--key-score min|sum` controls how the sampled point errors are combined into one key score. Default is `min`.
+- `--z-layers 0` uses only the press layer.
+- `--z-layers 1,2` uses both hover layers.
+- `--z-layers 0,1,2` uses all layers to classify the key regardless of press/hover height.
 - `--min-total-g2` can reject very weak/no-signal frames.
+
+Key score modes:
+
+- `min`: use only the nearest sampled point error for each key.
+- `sum`: add all selected sampled point errors for each key.
 
 The classifier compares the live normalized H2 distribution:
 
@@ -176,6 +208,6 @@ The classifier compares the live normalized H2 distribution:
 F = [S1_H2, S2_H2, ...] / (S1_H2 + S2_H2 + ...)
 ```
 
-against every LUT entry, then reports the lowest-score key and sampled position.
+against the LUT entries. It first computes errors to each sampled point and selected z layer, then groups those errors by `key_id` and reports the lowest-score key.
 The live FPGA sensor count must match the LUT entry sensor count.
-The `key=` field is the current best match, and the `stable=` field reports a key only after the same key has been detected for the configured number of consecutive classifications.
+The `key=` field is the current best key match, `z=` and `pos=` show the nearest sampled z layer and point for debugging, and `stable=` reports a key only after the same key has been detected for the configured number of consecutive classifications.

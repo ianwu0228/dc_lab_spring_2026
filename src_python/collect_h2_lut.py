@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+import os
 import re
 import statistics
 import sys
@@ -119,6 +120,14 @@ def write_header(writer):
     writer.writeheader()
 
 
+def existing_row_count(path):
+    if not os.path.exists(path):
+        return 0
+
+    with open(path, newline="", encoding="utf-8") as csv_file:
+        return sum(1 for _row in csv.DictReader(csv_file))
+
+
 def sensor_list_text(values, fmt):
     return " ".join(
         f"S{index + 1}={format(value, fmt)}"
@@ -141,6 +150,22 @@ def main() -> int:
     parser.add_argument("--samples", type=int, default=200)
     parser.add_argument("--settle", type=float, default=0.2)
     parser.add_argument("--keys", type=int, default=5)
+    parser.add_argument(
+        "--z-layer-id",
+        type=int,
+        default=0,
+        help="Z layer being collected. Use 0 for press plane, 1/2 for hover planes.",
+    )
+    parser.add_argument(
+        "--z-layer-name",
+        default="press",
+        help="Human-readable z layer name, e.g. press, hover-low, hover-high.",
+    )
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Append this z layer to an existing LUT CSV instead of overwriting it.",
+    )
     parser.add_argument(
         "--key-names",
         help="Comma-separated key labels. Example: C,D,E,F,G",
@@ -167,6 +192,8 @@ def main() -> int:
         "entry_index",
         "key_id",
         "key_name",
+        "z_layer_id",
+        "z_layer_name",
         "position_label",
         "local_x_cm",
         "local_y_cm",
@@ -195,8 +222,9 @@ def main() -> int:
 
     print("=== H2 LUT Collection ===")
     print(f"Frequency: {args.frequency} Hz")
+    print(f"Z layer: {args.z_layer_name} (id {args.z_layer_id})")
     print(f"Keys: {', '.join(key_names)}")
-    print(f"Grid: {len(positions)} positions/key, {total_entries} entries total")
+    print(f"Grid: {len(positions)} points/key, {total_entries} entries for this layer")
     print(f"Samples/entry: {args.samples}")
     print("Sensor count: auto-detected from the FPGA UART frame, supports 3 or 4 sensors.")
     print()
@@ -210,9 +238,15 @@ def main() -> int:
             print(f"Opened {args.port} at {args.baud} baud.")
             input("Press Enter once the FPGA H2 stream is running...")
 
-            with open(args.output, "w", newline="", encoding="utf-8") as csv_file:
+            file_exists = os.path.exists(args.output)
+            write_header_now = not args.append or not file_exists or os.path.getsize(args.output) == 0
+            if args.append:
+                entry_index = existing_row_count(args.output)
+
+            with open(args.output, "a" if args.append else "w", newline="", encoding="utf-8") as csv_file:
                 writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-                write_header(writer)
+                if write_header_now:
+                    write_header(writer)
 
                 for key_id, key_name in enumerate(key_names):
                     for position_label, local_x_cm, local_y_cm in positions:
@@ -262,6 +296,8 @@ def main() -> int:
                                         "entry_index": entry_index,
                                         "key_id": key_id,
                                         "key_name": key_name,
+                                        "z_layer_id": args.z_layer_id,
+                                        "z_layer_name": args.z_layer_name,
                                         "position_label": position_label,
                                         "local_x_cm": local_x_cm,
                                         "local_y_cm": local_y_cm,
