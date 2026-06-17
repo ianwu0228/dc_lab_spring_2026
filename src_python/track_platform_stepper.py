@@ -108,7 +108,7 @@ def main() -> int:
     parser.add_argument("--min-center-key", type=int, default=2)
     parser.add_argument("--max-center-key", type=int, default=12)
     parser.add_argument("--steps-per-key", type=int, default=100)
-    parser.add_argument("--steps-per-second", type=float, default=100.0)
+    parser.add_argument("--steps-per-second", type=float, default=800.0)
     parser.add_argument("--left-threshold", type=int, default=-2)
     parser.add_argument("--right-threshold", type=int, default=2)
     parser.add_argument(
