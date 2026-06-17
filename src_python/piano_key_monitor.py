@@ -61,59 +61,100 @@ def note_frequency(note):
 
 
 class TonePlayer:
-    def __init__(self, notes, enabled):
+    def __init__(self, notes, enabled, duration_ms, volume, buffer_size):
         self.enabled = enabled
+        self.duration_ms = duration_ms
+        self.volume = volume
+        self.buffer_size = buffer_size
         self.sounds = {}
+        self.channels = {}
         self.pygame = None
+        self.winsound = None
         if not enabled:
             return
 
         try:
             import pygame
         except ImportError:
-            print("Missing dependency: pygame. Install with: pip install pygame", file=sys.stderr)
-            self.enabled = False
+            try:
+                import winsound
+            except ImportError:
+                print(
+                    "Missing dependency: pygame. Install with: pip install pygame",
+                    file=sys.stderr,
+                )
+                self.enabled = False
+                return
+
+            self.winsound = winsound
+            print(
+                "pygame not found; using Windows winsound fallback. "
+                "Install pygame for low-latency held-note playback."
+            )
             return
 
         self.pygame = pygame
-        pygame.mixer.pre_init(44100, -16, 1, 512)
+        pygame.mixer.pre_init(44100, -16, 1, buffer_size)
         pygame.mixer.init()
+        pygame.mixer.set_num_channels(8)
         for note in notes:
             self.sounds[note] = pygame.mixer.Sound(buffer=self._make_tone(note))
 
     def _make_tone(self, note):
         sample_rate = 44100
-        duration = 0.45
+        duration = self.duration_ms / 1000.0
         frequency = note_frequency(note)
         sample_count = int(sample_rate * duration)
         samples = bytearray()
 
         for index in range(sample_count):
             t = index / sample_rate
-            envelope = min(1.0, index / 800.0)
-            release_start = int(sample_count * 0.70)
-            if index > release_start:
-                envelope *= max(
-                    0.0,
-                    1.0 - (index - release_start) / (sample_count - release_start),
-                )
+            envelope = 1.0
 
             value = (
                 math.sin(2.0 * math.pi * frequency * t)
                 + 0.35 * math.sin(2.0 * math.pi * frequency * 2.0 * t)
                 + 0.15 * math.sin(2.0 * math.pi * frequency * 3.0 * t)
             )
-            sample = int(max(-1.0, min(1.0, value * envelope * 0.45)) * 32767)
+            sample = int(max(-1.0, min(1.0, value * envelope * self.volume)) * 32767)
             samples.extend(struct.pack("<h", sample))
 
         return bytes(samples)
 
-    def play(self, note):
+    def note_on(self, finger_id, note):
         if not self.enabled:
             return
-        sound = self.sounds.get(note)
-        if sound is not None:
-            sound.play()
+        if self.pygame is not None:
+            sound = self.sounds.get(note)
+            if sound is not None:
+                old_channel = self.channels.get(finger_id)
+                if old_channel is not None:
+                    old_channel.stop()
+                self.channels[finger_id] = sound.play(loops=-1)
+            return
+
+        if self.winsound is not None:
+            frequency = int(round(note_frequency(note)))
+            threading.Thread(
+                target=self.winsound.Beep,
+                args=(frequency, self.duration_ms),
+                daemon=True,
+            ).start()
+
+    def note_off(self, finger_id):
+        if self.pygame is None:
+            return
+        channel = self.channels.pop(finger_id, None)
+        if channel is not None:
+            channel.stop()
+
+    def shutdown(self):
+        if self.pygame is None:
+            return
+        for channel in self.channels.values():
+            channel.stop()
+        self.channels.clear()
+        self.pygame.mixer.quit()
 
 
 def serial_reader(port, baud, output_queue, stop_event):
@@ -144,6 +185,8 @@ class PianoMonitor:
         self.player = player
         self.previous_press75 = False
         self.previous_press45 = False
+        self.previous_key75 = None
+        self.previous_key45 = None
         self.last_key75 = 0
         self.last_key45 = 0
 
@@ -188,13 +231,23 @@ class PianoMonitor:
         press75 = event["press75"]
         press45 = event["press45"]
 
-        if press75 and not self.previous_press75 and 0 <= self.last_key75 < len(self.notes):
-            self.player.play(self.notes[self.last_key75])
-        if press45 and not self.previous_press45 and 0 <= self.last_key45 < len(self.notes):
-            self.player.play(self.notes[self.last_key45])
+        # Update audio before drawing the GUI, so sound is not delayed by Tk rendering.
+        if press75 and 0 <= self.last_key75 < len(self.notes):
+            if (not self.previous_press75) or (self.last_key75 != self.previous_key75):
+                self.player.note_on("75", self.notes[self.last_key75])
+        elif self.previous_press75:
+            self.player.note_off("75")
+
+        if press45 and 0 <= self.last_key45 < len(self.notes):
+            if (not self.previous_press45) or (self.last_key45 != self.previous_key45):
+                self.player.note_on("45", self.notes[self.last_key45])
+        elif self.previous_press45:
+            self.player.note_off("45")
 
         self.previous_press75 = press75
         self.previous_press45 = press45
+        self.previous_key75 = self.last_key75
+        self.previous_key45 = self.last_key45
 
         for index, rect in enumerate(self.key_rects):
             is75 = press75 and index == self.last_key75
@@ -234,7 +287,44 @@ def main() -> int:
         action="store_true",
         help="Show the window but do not play synthesized tones.",
     )
+    parser.add_argument(
+        "--duration-ms",
+        type=int,
+        default=1000,
+        help="Generated tone buffer duration in milliseconds. With pygame, the buffer loops while pressed.",
+    )
+    parser.add_argument(
+        "--volume",
+        type=float,
+        default=0.45,
+        help="Synthesized tone volume for pygame backend, from 0.0 to 1.0.",
+    )
+    parser.add_argument(
+        "--buffer-size",
+        type=int,
+        default=128,
+        help="pygame mixer buffer size. Lower is more responsive; try 64 or 128.",
+    )
+    parser.add_argument(
+        "--poll-ms",
+        type=int,
+        default=5,
+        help="GUI serial-event polling period in milliseconds.",
+    )
     args = parser.parse_args()
+
+    if args.duration_ms <= 0:
+        print("--duration-ms must be positive", file=sys.stderr)
+        return 2
+    if not 0.0 <= args.volume <= 1.0:
+        print("--volume must be between 0.0 and 1.0", file=sys.stderr)
+        return 2
+    if args.buffer_size <= 0:
+        print("--buffer-size must be positive", file=sys.stderr)
+        return 2
+    if args.poll_ms <= 0:
+        print("--poll-ms must be positive", file=sys.stderr)
+        return 2
 
     try:
         notes = parse_notes(args.notes)
@@ -255,7 +345,13 @@ def main() -> int:
 
     root = tk.Tk()
     root.title("FPGA Magnetic Piano Monitor")
-    player = TonePlayer(notes, not args.no_sound)
+    player = TonePlayer(
+        notes,
+        not args.no_sound,
+        args.duration_ms,
+        args.volume,
+        args.buffer_size,
+    )
     monitor = PianoMonitor(root, notes, player)
 
     def poll_events():
@@ -265,10 +361,11 @@ def main() -> int:
             except queue.Empty:
                 break
             monitor.update(event)
-        root.after(20, poll_events)
+        root.after(args.poll_ms, poll_events)
 
     def on_close():
         stop_event.set()
+        player.shutdown()
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)

@@ -156,11 +156,27 @@ To map global keys to note names:
 python3 src_python/read_key_uart.py COM5 --notes F3,G3,A3,B3,C4,D4,E4,F4,G4,A4,B4,C5,D5,E5,F5
 ```
 
-To show a live piano-key window and play simple synthesized tones when the press buttons are active:
+To show a live piano-key window and play notes while the press buttons are held, install `pygame` first. This is the recommended backend because it supports low-latency note start and exact note stop on button release:
+
+```bash
+pip install pygame
+```
+
+Recommended low-latency run command:
+
+```bash
+python3 src_python/piano_key_monitor.py COM5 --notes F3,G3,A3,B3,C4,D4,E4,F4,G4,A4,B4,C5,D5,E5,F5 --buffer-size 64 --poll-ms 2 --volume 0.6
+```
+
+The monitor starts the note when the FPGA press bit becomes `1` and stops it when the press bit returns to `0`. It updates audio before redrawing the Tk keyboard display, so the sound path does not wait for GUI rendering.
+
+Basic run command, using default latency settings:
 
 ```bash
 python3 src_python/piano_key_monitor.py COM5 --notes F3,G3,A3,B3,C4,D4,E4,F4,G4,A4,B4,C5,D5,E5,F5
 ```
+
+On Windows, if `pygame` is not installed, `piano_key_monitor.py` falls back to the built-in `winsound` beep backend. That fallback is only for quick testing; it cannot stop a note exactly on button release, so it will feel less synchronized than `pygame`.
 
 The FPGA reports global key indices `0..14`, so provide 15 note names if all global keys are used. The software maps key `0` to the first note in the list, key `1` to the second note, and so on. Replace the example with your exact physical key mapping if it differs.
 
