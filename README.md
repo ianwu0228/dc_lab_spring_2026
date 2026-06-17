@@ -132,17 +132,32 @@ Install the PC-side dependency first:
 pip install pyserial
 ```
 
-Collect a LUT from one selected excitation frequency. Each z layer is collected as a separate run, but all layers for the same frequency can be saved into the same CSV:
+Collect a LUT from one selected excitation frequency. Each command collects exactly one z layer. The first command creates or overwrites the CSV; later layer commands must use `--append` so all layers for the same frequency are saved into the same LUT file.
+
+For five keys, one layer contains `5 keys x 3 points = 15` entries. Collect the layers separately like this:
 
 ```bash
+# Layer 0: key press plane. This creates h75_lut.csv.
 python3 src_python/collect_h2_lut.py COM5 --frequency 75 --output h75_lut.csv --key-names K0,K1,K2,K3,K4 --z-layer-id 0 --z-layer-name press
+
+# Layer 1: lower hover plane. This appends to h75_lut.csv.
 python3 src_python/collect_h2_lut.py COM5 --frequency 75 --output h75_lut.csv --key-names K0,K1,K2,K3,K4 --z-layer-id 1 --z-layer-name hover-low --append
+
+# Layer 2: upper hover plane. This appends to h75_lut.csv.
 python3 src_python/collect_h2_lut.py COM5 --frequency 75 --output h75_lut.csv --key-names K0,K1,K2,K3,K4 --z-layer-id 2 --z-layer-name hover-high --append
 ```
 
+To append the second physical layer after layer 0 is already collected, use the layer 1 command with `--append`:
+
+```bash
+python3 src_python/collect_h2_lut.py COM5 --frequency 75 --output h75_lut.csv --key-names K0,K1,K2,K3,K4 --z-layer-id 1 --z-layer-name hover-low --append
+```
+
+The important part is `--append`. Without it, `h75_lut.csv` is opened as a new file and the layer 0 data is replaced.
+
 During collection, the script prompts for each key and each sample position. Each key is sampled at three centered vertical points: `top`, `middle`, and `bottom`. Move the electromagnet/finger to the requested point, hold it still, then press Enter to collect that LUT entry.
 The script auto-detects whether the FPGA is sending three or four sensor values and records that in the CSV `sensor_count` column.
-For five local keys, this produces `5 keys x 3 points x 3 z layers = 45` LUT entries per frequency.
+After all three runs, the CSV contains `5 keys x 3 points x 3 z layers = 45` LUT entries per frequency. If you restart the first layer without `--append`, the old CSV is intentionally replaced.
 
 The intended z layers are:
 
@@ -211,3 +226,53 @@ F = [S1_H2, S2_H2, ...] / (S1_H2 + S2_H2 + ...)
 against the LUT entries. It first computes errors to each sampled point and selected z layer, then groups those errors by `key_id` and reports the lowest-score key.
 The live FPGA sensor count must match the LUT entry sensor count.
 The `key=` field is the current best key match, `z=` and `pos=` show the nearest sampled z layer and point for debugging, and `stable=` reports a key only after the same key has been detected for the configured number of consecutive classifications.
+
+## Python Platform Tracking With Arduino Stepper
+
+After both `h75_lut.csv` and `h45_lut.csv` are collected, the PC can classify the two electromagnets and command the sliding platform through an Arduino connected to the DRV8825 driver.
+
+The tracker assumes the local five-key sensing window is:
+
+```text
+K0 K1 K2 K3 K4
+-2 -1  0 +1 +2
+```
+
+The current global keyboard has 15 keys. The platform center is allowed to move from global key `2` to global key `12`. The default starting center is global key `12`, so it cannot move farther right at startup. One key movement is `100` motor steps by default.
+
+First run in dry-run mode. This reads the FPGA COM port and prints the Arduino command that would be sent, but does not move the motor:
+
+```bash
+python3 src_python/track_platform_stepper.py COM5 --lut-75 h75_lut.csv --lut-45 h45_lut.csv
+```
+
+To actually command the Arduino, pass the Arduino COM port and `--enable-motor`:
+
+```bash
+python3 src_python/track_platform_stepper.py COM5 COM6 --lut-75 h75_lut.csv --lut-45 h45_lut.csv --enable-motor
+```
+
+The control rule is:
+
+```text
+local_center_sum = local_75Hz + local_45Hz
+
+if local_center_sum <= -2: move left  one key = -100 steps
+if local_center_sum >= +2: move right one key = +100 steps
+otherwise: stay
+```
+
+The script requires the same nonzero movement request for `--move-stable` consecutive classifications before moving. After a move, it waits for the estimated motor motion time plus `--move-cooldown`, clears old FPGA samples, and continues from the new platform center.
+
+Useful options:
+
+```bash
+python3 src_python/track_platform_stepper.py COM5 COM6 --lut-75 h75_lut.csv --lut-45 h45_lut.csv --enable-motor --z-layers 1,2 --move-stable 3 --steps-per-key 100
+```
+
+- `--z-layers 1,2` uses only hover layers for platform tracking.
+- `--z-layers 0,1,2` uses all collected layers. This is the default.
+- `--initial-center-key 12` sets the starting global platform center.
+- `--min-center-key 2` and `--max-center-key 12` clamp the allowed platform travel.
+- `--steps-per-key 100` sets the motor distance for one key shift.
+- `--enable-motor` is required before any Arduino command is actually sent.

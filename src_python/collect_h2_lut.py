@@ -128,6 +128,34 @@ def existing_row_count(path):
         return sum(1 for _row in csv.DictReader(csv_file))
 
 
+def existing_header(path):
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return None
+
+    with open(path, newline="", encoding="utf-8") as csv_file:
+        reader = csv.reader(csv_file)
+        return next(reader, None)
+
+
+def validate_append_target(path, fieldnames):
+    header = existing_header(path)
+    if header is None:
+        return True
+
+    if header == fieldnames:
+        return True
+
+    print(
+        f"Cannot append to {path}: CSV header does not match this collector version.",
+        file=sys.stderr,
+    )
+    print(
+        "Use a new output file, or recollect the first layer with this script.",
+        file=sys.stderr,
+    )
+    return False
+
+
 def sensor_list_text(values, fmt):
     return " ".join(
         f"S{index + 1}={format(value, fmt)}"
@@ -233,15 +261,25 @@ def main() -> int:
     print()
 
     entry_index = 0
+    layer_entry_index = 0
     try:
         with serial.Serial(args.port, args.baud, timeout=1) as ser:
             print(f"Opened {args.port} at {args.baud} baud.")
             input("Press Enter once the FPGA H2 stream is running...")
 
             file_exists = os.path.exists(args.output)
-            write_header_now = not args.append or not file_exists or os.path.getsize(args.output) == 0
+            output_empty = not file_exists or os.path.getsize(args.output) == 0
+            write_header_now = not args.append or output_empty
             if args.append:
+                if not validate_append_target(args.output, fieldnames):
+                    return 2
                 entry_index = existing_row_count(args.output)
+                print(
+                    f"Appending one z layer to {args.output}; "
+                    f"starting CSV entry_index at {entry_index}."
+                )
+            else:
+                print(f"Writing one z layer to new LUT file: {args.output}")
 
             with open(args.output, "a" if args.append else "w", newline="", encoding="utf-8") as csv_file:
                 writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
@@ -252,7 +290,9 @@ def main() -> int:
                     for position_label, local_x_cm, local_y_cm in positions:
                         while True:
                             print()
-                            print(f"Entry {entry_index + 1}/{total_entries}")
+                            print(f"Layer entry {layer_entry_index + 1}/{total_entries}")
+                            print(f"CSV entry_index: {entry_index}")
+                            print(f"Z layer: {args.z_layer_name} (id {args.z_layer_id})")
                             print(f"Key: {key_name} (id {key_id})")
                             print(f"Position: {position_label}")
                             print(f"Local coordinate: x={local_x_cm:+.1f} cm, y={local_y_cm:.1f} cm")
@@ -326,6 +366,7 @@ def main() -> int:
                                 )
                                 csv_file.flush()
                                 entry_index += 1
+                                layer_entry_index += 1
                                 print(f"Saved to {args.output}.")
                                 break
 
@@ -339,7 +380,10 @@ def main() -> int:
         return 1
 
     print()
-    print(f"Completed {entry_index} LUT entries.")
+    print(
+        f"Completed {layer_entry_index} LUT entries for z layer "
+        f"{args.z_layer_name} (id {args.z_layer_id})."
+    )
     print(f"Output: {args.output}")
     return 0
 

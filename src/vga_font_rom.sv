@@ -1,4 +1,4 @@
-module vga_font_rom (
+c:\Ian\DC_lab\final\h45_lut.csv c:\Ian\DC_lab\final\h75_lut.csvmodule vga_font_rom (
     input  wire [7:0] character,
     input  wire [2:0] glyph_row,
     output reg  [7:0] pixels
