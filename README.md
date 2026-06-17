@@ -153,16 +153,16 @@ python3 src_python/read_key_uart.py COM5
 To map global keys to note names:
 
 ```bash
-python3 src_python/read_key_uart.py COM5 --notes F3,G3,A3,B3,C4,D4,E4,F4,G4,A4,B4,C5,D5,E5
+python3 src_python/read_key_uart.py COM5 --notes F3,G3,A3,B3,C4,D4,E4,F4,G4,A4,B4,C5,D5,E5,F5
 ```
 
 To show a live piano-key window and play simple synthesized tones when the press buttons are active:
 
 ```bash
-python3 src_python/piano_key_monitor.py COM5 --notes F3,G3,A3,B3,C4,D4,E4,F4,G4,A4,B4,C5,D5,E5
+python3 src_python/piano_key_monitor.py COM5 --notes F3,G3,A3,B3,C4,D4,E4,F4,G4,A4,B4,C5,D5,E5,F5
 ```
 
-The FPGA reports global key indices `0..14`. The software maps key `0` to the first note in the list, key `1` to the second note, and so on. If a reported key is outside the provided note list, the PC displays `OUT`.
+The FPGA reports global key indices `0..14`, so provide 15 note names if all global keys are used. The software maps key `0` to the first note in the list, key `1` to the second note, and so on. Replace the example with your exact physical key mapping if it differs.
 
 ## Python LUT and Classification Workflow
 
