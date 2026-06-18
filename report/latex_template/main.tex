@@ -1,0 +1,35 @@
+\documentclass[a4paper,12pt]{article}
+
+\usepackage{Report}
+
+% --------------------------------------------------
+% Report metadata
+% --------------------------------------------------
+\title{AAIC Design Project 2 Report}
+\setgroup{}
+\setauthors{
+    B11202010  \\
+    B11901194  \\
+}
+\setdepartment{National Taiwan University, Electrical Engineering}
+\setdate{\today}
+
+\begin{document}
+
+\maketitle
+
+\input{contents/01_spec_summary.tex}
+\input{contents/02_system_architecture.tex}
+\input{contents/03_design_considerations.tex}
+\input{contents/04_circuit_design.tex}
+\input{contents/05_simulation_results.tex}
+
+\begin{appendices}
+\input{back/appendix01.tex}
+\end{appendices}
+
+\nocite{*}
+\bibliographystyle{ieeetr}
+\bibliography{back/references.bib}
+
+\end{document}

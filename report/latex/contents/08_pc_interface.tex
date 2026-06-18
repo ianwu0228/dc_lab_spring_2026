@@ -1,0 +1,45 @@
+\section{PC Interface and Sound Output}
+\label{sec:pc_interface}
+
+\subsection{UART Frame Format}
+
+The FPGA streams compact ASCII frames to the PC through RS232/UART. Two frame types are used. The $H^2$ frame is mainly useful for debugging and LUT collection:
+
+\begin{lstlisting}
+H2,75,H75S1,H75S2,H75S3,45,H45S1,H45S2,H45S3
+\end{lstlisting}
+
+The final runtime piano interface uses the key frame:
+
+\begin{lstlisting}
+KEY,75,KEY75,PRESS75,45,KEY45,PRESS45
+\end{lstlisting}
+
+\code{KEY75} and \code{KEY45} are two-digit global key indices, from 00 to 14. \code{PRESS75} and \code{PRESS45} are debounced active-high button states.
+
+\subsection{Role of the PC}
+
+The PC does not perform magnetic localization in the final system. Its responsibilities are:
+
+\begin{itemize}
+    \item Receive the FPGA key/press frame.
+    \item Map global key indices to note names.
+    \item Display a live piano-key GUI.
+    \item Play or stop the corresponding sound when the FPGA press bit changes.
+\end{itemize}
+
+This division keeps the project focused on FPGA computation. The Python script is an output interface, not a classifier.
+
+\subsection{Piano GUI and Sound}
+
+The final Python monitor maps global key indices to musical notes. The command used for the 15-key layout is:
+
+\begin{lstlisting}
+python3 src_python/piano_key_monitor.py COM5 \
+  --notes F3,G3,A3,B3,C4,D4,E4,F4,G4,A4,B4,C5,D5,E5,F5 \
+  --buffer-size 64 --poll-ms 2 --volume 0.6
+\end{lstlisting}
+
+The monitor starts a note when the corresponding press bit becomes 1 and stops it when the press bit returns to 0. With the pygame audio backend, the sound is played as a held note with low-latency start and exact stop on release.
+
+\placeholderfigure{Insert a screenshot of the Python piano GUI showing highlighted keys.}{PC piano GUI receiving FPGA-computed key states.}{fig:piano_gui}{figures/piano_gui.png}

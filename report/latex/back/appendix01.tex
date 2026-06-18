@@ -1,0 +1,83 @@
+\section{Pin Connections}
+\label{app:pin_connections}
+
+\begin{table}[H]
+    \centering
+    \caption{External pin summary.}
+    \label{tab:appendix_pins}
+    \renewcommand{\arraystretch}{1.2}
+    \small
+    \begin{tabularx}{0.96\textwidth}{p{3.4cm} p{3.5cm} X}
+        \toprule
+        \textbf{Connection} & \textbf{DE2 GPIO} & \textbf{Description} \\
+        \midrule
+        Sensor 1 SCL/SDA & GPIO[0]/GPIO[1] & Independent I2C bus for magnetometer 1. \\
+        Sensor 2 SCL/SDA & GPIO[2]/GPIO[3] & Independent I2C bus for magnetometer 2. \\
+        Sensor 3 SCL/SDA & GPIO[4]/GPIO[5] & Independent I2C bus for magnetometer 3. \\
+        DRV8825 STEP & GPIO[8] & Step pulse output. \\
+        DRV8825 DIR & GPIO[9] & Direction output. \\
+        DRV8825 ENABLE\_N & GPIO[10] & Active-low driver enable. \\
+        75 Hz press button & GPIO[11] & Active-high press state for 75 Hz finger. \\
+        45 Hz press button & GPIO[12] & Active-high press state for 45 Hz finger. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\section{UART Frame Reference}
+\label{app:uart_reference}
+
+\begin{lstlisting}
+H2,75,H75S1,H75S2,H75S3,45,H45S1,H45S2,H45S3
+KEY,75,KEY75,PRESS75,45,KEY45,PRESS45
+\end{lstlisting}
+
+The $H^2$ values are unsigned 32-bit hexadecimal Q16 values. The key indices are decimal global key indices. The press bits are active-high digital states after FPGA debouncing.
+
+\section{Important Runtime Parameters}
+\label{app:runtime_parameters}
+
+\begin{table}[H]
+    \centering
+    \caption{Important final parameters.}
+    \label{tab:runtime_parameters}
+    \renewcommand{\arraystretch}{1.2}
+    \begin{tabular}{l c}
+        \toprule
+        \textbf{Parameter} & \textbf{Value} \\
+        \midrule
+        Magnetometer count & 3 \\
+        Magnetometer output data rate & 200 Hz \\
+        Magnetometer range & $\pm 2$ G \\
+        Finger frequencies & 75 Hz and 45 Hz \\
+        Lock-in window & 100 samples \\
+        Classifier $H^2$ average & 10 frames \\
+        LUT entries per frequency & 45 \\
+        Local key range & -2 to +2 \\
+        Global key range & 0 to 14 \\
+        One-key movement & 100 motor steps \\
+        Stepper speed & 800 steps/s \\
+        Step pulse width & 5 us \\
+        Platform cooldown & 100 ms \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\section{Code Organization}
+\label{app:code_organization}
+
+The main FPGA source files are located in \code{src/}. The main Python utility files are located in \code{src\_python/}. The final PC piano interface is \code{src\_python/piano\_key\_monitor.py}. The FPGA LUT ROM files are \code{src/h75\_lut\_3sensor.mem} and \code{src/h45\_lut\_3sensor.mem}.
+
+\newpage
+\section{Project File Structure}
+\label{app:file_structure}
+
+The submitted repository is organized as follows:
+
+\begin{lstlisting}
+final_project/
+|-- README.md
+|-- src/
+`-- src_python/
+\end{lstlisting}
+
+The Verilog/SystemVerilog files in \code{src/} implement the FPGA runtime system. The Python files in \code{src\_python/} are used for LUT collection, LUT export, debugging, and the final PC piano interface. The final report source and generated PDF are stored in \code{report/latex/}.

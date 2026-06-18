@@ -1,0 +1,25 @@
+\section{Introduction}
+\label{sec:introduction}
+
+Traditional piano keyboards and many touch interfaces rely on direct electrical or mechanical contact. For this final project, we explored a different sensing method: magnetic-field localization. The original motivation came from Finexus, a finger-tracking system that uses frequency-multiplexed electromagnets and multiple magnetic sensors to track fingertip motion \cite{chen2016finexus}. Instead of attempting full 3D reconstruction in software, our project focuses on a digital-circuit implementation of a practical musical interface: determine which piano key a magnetic finger is over, move the sensing platform when needed, and output the corresponding musical note.
+
+The final system is a magnetic-field finger-tracking musical glove. Two electromagnets are treated as two fingers. They are driven at different AC frequencies, 75 Hz and 45 Hz, so that their magnetic fields can be separated by frequency. Three QMC5883P magnetometers measure the magnetic field around a local sensing region. The FPGA performs the real-time localization pipeline and sends only the final key state to a PC. The PC does not perform localization; it only receives the FPGA-computed key indices and press states, displays a piano-key interface, and plays the notes.
+
+\subsection{Project Goals}
+
+The main goals of the project are:
+
+\begin{itemize}
+    \item Build a real-time magnetic-field sensing system using the DE2-115 FPGA board.
+    \item Distinguish two magnetic fingers by operating the electromagnets at two different frequencies.
+    \item Perform magnetometer calibration, frequency-selective filtering, $H^2$ computation, and key classification on FPGA.
+    \item Use a measured LUT to classify the local key position from the magnetic-field pattern across sensors.
+    \item Extend the local sensing range using a stepper-motor-driven sliding platform.
+    \item Send only the final key and press information to a PC for visualization and sound output.
+\end{itemize}
+
+\subsection{Final Scope}
+
+The final implementation uses three magnetometers and a five-key local sensing window. The full keyboard layout contains 15 global key positions. The platform can slide in one-key increments, so the local five-key window can cover different parts of the global keyboard. The FPGA performs all sensing and decision-making tasks. The PC is intentionally kept outside the localization loop to preserve the digital-lab focus of the project.
+
+\placeholderfigure{Insert a photo of the final hardware setup, including the DE2-115 board, sensor platform, electromagnets, amplifier, stepper rail, and PC interface.}{Final project hardware setup.}{fig:final_hardware_photo}{figures/final_hardware_photo.jpg}

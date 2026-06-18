@@ -1,0 +1,135 @@
+\section{LUT-Based Key Classification}
+\label{sec:lut_classification}
+
+\subsection{Motivation}
+
+The final system does not solve a full continuous 3D inverse magnetic-field equation during runtime. Instead, it uses a measured lookup table (LUT). This approach is practical for our application because the piano keys form a discrete set of positions. The classifier only needs to determine which key is most likely, not estimate a continuous 3D coordinate.
+
+Each key position produces a characteristic distribution of $H^2$ across the three sensors. The FPGA compares the live distribution with stored LUT entries and selects the key with the smallest error.
+
+\subsection{LUT Construction}
+
+For each frequency, a separate LUT is collected:
+
+\begin{itemize}
+    \item \code{h75\_lut.csv} for the 75 Hz finger.
+    \item \code{h45\_lut.csv} for the 45 Hz finger.
+\end{itemize}
+
+The local sensing window contains five keys:
+
+\begin{equation}
+    k_{\mathrm{local}} \in \{-2,-1,0,+1,+2\}.
+\end{equation}
+
+For each key, three horizontal sample points are collected: top, middle, and bottom. To improve robustness to different finger heights, three vertical layers are collected: the key plane and two hover planes. Thus, one frequency LUT contains:
+
+\begin{equation}
+    5~\mathrm{keys} \times 3~\mathrm{points/key} \times 3~\mathrm{layers}
+    = 45~\mathrm{entries}.
+\end{equation}
+
+Each entry is an average of multiple received $H^2$ frames, so the LUT represents a stable measured magnetic pattern.
+
+\placeholderfigure{Insert the LUT sampling diagram: five local keys, three sample points per key, and three z layers.}{LUT sampling positions.}{fig:lut_sampling}{figures/lut_sampling.png}
+
+\subsection{Normalized Feature Extraction}
+
+Directly comparing raw $H^2$ values is sensitive to total field strength. If the finger is slightly closer or farther from the sensors, all $H^2$ values can change even when the position is the same. To focus on position, the classifier uses normalized sensor ratios:
+
+\begin{align}
+    H_{\mathrm{total}}^2 &= H_1^2 + H_2^2 + H_3^2, \\
+    f_1 &= \frac{H_1^2}{H_{\mathrm{total}}^2}, \\
+    f_2 &= \frac{H_2^2}{H_{\mathrm{total}}^2}, \\
+    f_3 &= \frac{H_3^2}{H_{\mathrm{total}}^2}.
+\end{align}
+
+The ratios satisfy
+
+\begin{equation}
+    f_1 + f_2 + f_3 = 1.
+\end{equation}
+
+This means the classifier compares which sensor is strongest relative to the others, rather than comparing only absolute magnitude.
+
+\subsection{Why Normalization Helps Position Classification}
+
+Raw $H^2$ mainly describes signal strength. Normalized $H^2$ describes the spatial pattern across sensors. For example, when the magnetic finger is closer to sensor 1, sensor 1 becomes dominant. When it moves toward sensor 2, sensor 2 becomes more dominant. This relative distribution is more directly related to position.
+
+A simple example is shown in Table~\ref{tab:normalization_example}. The live sample is actually Key A. A raw $H^2$ comparison would incorrectly choose Key B because the absolute values are closer to Key B. However, after normalization, the live pattern exactly matches Key A.
+
+\begin{table}[H]
+    \centering
+    \caption{Example showing why normalized $H^2$ improves position classification.}
+    \label{tab:normalization_example}
+    \renewcommand{\arraystretch}{1.2}
+    \begin{tabular}{l c c c c}
+        \toprule
+        \textbf{Sample} & $H_1^2$ & $H_2^2$ & $H_3^2$ & \textbf{Normalized pattern} \\
+        \midrule
+        LUT Key A & 10 & 5 & 5 & [0.50, 0.25, 0.25] \\
+        LUT Key B & 18 & 9 & 3 & [0.60, 0.30, 0.10] \\
+        Live at Key A & 20 & 10 & 10 & [0.50, 0.25, 0.25] \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The raw squared error to Key A is
+
+\begin{equation}
+    (20-10)^2 + (10-5)^2 + (10-5)^2 = 150.
+\end{equation}
+
+The raw squared error to Key B is
+
+\begin{equation}
+    (20-18)^2 + (10-9)^2 + (10-3)^2 = 54.
+\end{equation}
+
+Raw $H^2$ therefore chooses Key B incorrectly. In contrast, the normalized error to Key A is zero, so normalized features correctly preserve the position pattern.
+
+\subsection{Error Function}
+
+The FPGA uses the same core scoring method as the Python prototype. For a live feature vector and one LUT entry:
+
+\begin{align}
+    E_{\mathrm{ratio}} &=
+    (f_{1,\mathrm{live}} - f_{1,\mathrm{LUT}})^2 +
+    (f_{2,\mathrm{live}} - f_{2,\mathrm{LUT}})^2 \nonumber \\
+    &\quad +
+    (f_{3,\mathrm{live}} - f_{3,\mathrm{LUT}})^2, \\
+    E_{\mathrm{strength}} &=
+    \left(\ln(H_{\mathrm{total,live}}^2) -
+    \ln(H_{\mathrm{total,LUT}}^2)\right)^2, \\
+    E_{\mathrm{final}} &= E_{\mathrm{ratio}} + 0.05 E_{\mathrm{strength}}.
+\end{align}
+
+The logarithmic strength term keeps useful distance information without allowing raw magnitude to dominate the score.
+
+\subsection{FPGA LUT ROM Format}
+
+The LUT is stored in FPGA ROM initialized from a hexadecimal \code{.mem} file. Each line is one 160-bit LUT entry:
+
+\begin{lstlisting}
+[159:156] key_id
+[155:128] reserved
+[127:96]  f1_q30
+[95:64]   f2_q30
+[63:32]   f3_q30
+[31:0]    ln_total_q16
+\end{lstlisting}
+
+The ratio values are stored in Q30 fixed-point format:
+
+\begin{equation}
+    f_{\mathrm{q30}} = f \cdot 2^{30}.
+\end{equation}
+
+The strength term is stored as Q16:
+
+\begin{equation}
+    \ln(H_{\mathrm{total}}^2)_{\mathrm{q16}}
+    = \ln(H_{\mathrm{total}}^2) \cdot 2^{16}.
+\end{equation}
+
+During classification, the FPGA scans all 45 LUT entries. For each key, it keeps the minimum entry score among all sample points and z layers. The predicted local key is the key with the lowest final score.

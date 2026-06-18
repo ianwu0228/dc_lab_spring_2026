@@ -1,0 +1,125 @@
+% ---------------------------------------------------------------------
+% AAIC Report Style
+% ---------------------------------------------------------------------
+\ProvidesPackage{Report}[2026/06/08 AAIC Project Report Style]
+
+% ---------------------------------------------------------------------
+% Packages
+% ---------------------------------------------------------------------
+\RequirePackage{xeCJK}
+\RequirePackage{fontspec}
+\RequirePackage{geometry}
+\RequirePackage{graphicx}
+\RequirePackage{titling}
+\RequirePackage{lmodern}
+\RequirePackage{hyperref}
+\RequirePackage{fancyhdr}
+\RequirePackage[table]{xcolor}
+\RequirePackage{amsmath,amsthm,amssymb}
+\RequirePackage{array}
+\RequirePackage{booktabs}
+\RequirePackage[title,titletoc]{appendix}
+\RequirePackage[sort&compress,square,comma,numbers]{natbib}
+\RequirePackage{enumitem}
+\RequirePackage{float}
+\RequirePackage{subcaption}
+\RequirePackage{caption}
+\RequirePackage{listings}
+\RequirePackage{tabularx}
+
+% ---------------------------------------------------------------------
+% Fonts
+% ---------------------------------------------------------------------
+\defaultfontfeatures{Ligatures=TeX}
+\setmainfont{Latin Modern Roman}
+
+\IfFileExists{./fonts/Chinese/BiauKai.ttf}{
+    \setCJKmainfont[
+        Path=./fonts/Chinese/,
+        BoldFont=Kaiti-Black.ttf
+    ]{BiauKai.ttf}
+}{
+    \IfFontExistsTF{Microsoft JhengHei}{
+        \setCJKmainfont{Microsoft JhengHei}
+    }{
+        \setCJKmainfont{SimSun}
+    }
+}
+
+% ---------------------------------------------------------------------
+% Page Layout
+% ---------------------------------------------------------------------
+\geometry{
+    left=19mm,
+    right=19mm,
+    top=30mm,
+    bottom=20mm
+}
+
+\setlength{\parskip}{3pt}
+\setlength{\parindent}{0pt}
+\setlength{\headheight}{14.5pt}
+\addtolength{\topmargin}{-2.5pt}
+
+% ---------------------------------------------------------------------
+% Links
+% ---------------------------------------------------------------------
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    anchorcolor=blue,
+    citecolor=blue,
+    urlcolor=blue
+}
+
+% ---------------------------------------------------------------------
+% Report Metadata
+% ---------------------------------------------------------------------
+\newcommand{\mytitle}{Untitled}
+\newcommand{\mygroup}{}
+\newcommand{\myauthors}{No authors defined}
+\newcommand{\documentdate}{\today}
+\newcommand{\department}{No department specified}
+
+\renewcommand{\title}[1]{\renewcommand{\mytitle}{#1}}
+\newcommand{\setgroup}[1]{\renewcommand{\mygroup}{#1}}
+\newcommand{\setauthors}[1]{\renewcommand{\myauthors}{#1}}
+\newcommand{\setdate}[1]{\renewcommand{\documentdate}{#1}}
+\newcommand{\setdepartment}[1]{\renewcommand{\department}{#1}}
+
+\renewcommand{\maketitle}{
+    \begingroup
+    \setlength{\parskip}{0pt}
+    \begin{center}
+        {\LARGE\bfseries \mytitle \par}
+        \vspace{0.8em}
+        \ifx\mygroup\empty\else
+            {\large\bfseries \mygroup \par}
+            \vspace{0.5em}
+        \fi
+        {\large \myauthors \par}
+        \vspace{0.5em}
+        {\normalsize \department \par}
+        \vspace{1em}
+        \hrule
+    \end{center}
+    \endgroup
+}
+
+% ---------------------------------------------------------------------
+% Header and Footer
+% ---------------------------------------------------------------------
+\fancypagestyle{mystyle}{
+    \fancyhf{}
+    \fancyhead[L]{Advanced Analog IC Design}
+    \fancyhead[R]{Project 2 Report}
+    \fancyfoot[L]{\documentdate}
+    \fancyfoot[C]{\thepage}
+}
+\pagestyle{mystyle}
+
+% ---------------------------------------------------------------------
+% Common Formatting
+% ---------------------------------------------------------------------
+\setlist[itemize]{leftmargin=1.4em}
+\setlist[enumerate]{leftmargin=1.6em}

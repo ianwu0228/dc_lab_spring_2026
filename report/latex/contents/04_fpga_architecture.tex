@@ -1,0 +1,69 @@
+\section{FPGA Architecture}
+\label{sec:fpga_architecture}
+
+The FPGA design is implemented in SystemVerilog and organized as a set of dedicated modules. The top-level file is \code{DE2\_115.sv}. The final design uses the FPGA for all real-time localization and control computations.
+
+\subsection{Module Overview}
+
+\begin{table}[H]
+    \centering
+    \caption{Important FPGA modules.}
+    \label{tab:fpga_modules}
+    \renewcommand{\arraystretch}{1.2}
+    \small
+    \begin{tabularx}{0.98\textwidth}{p{5.8cm} X}
+        \toprule
+        \textbf{Module} & \textbf{Function} \\
+        \midrule
+        \code{qmc5883p\_ctrl.sv} & Initializes and reads one QMC5883P magnetometer through I2C. \\
+        \code{i2c\_master.sv} & Low-level I2C transaction controller. \\
+        \code{mag\_calibration\_manager.sv} & Collects min/max samples and generates offset/scale coefficients. \\
+        \code{mag\_calibrator.sv} & Applies offset and scale correction to raw magnetometer data. \\
+        \code{carrier\_reference\_75hz.sv} & Generates sine/cosine reference samples for 75 Hz extraction. \\
+        \code{carrier\_reference\_45hz.sv} & Generates sine/cosine reference samples for 45 Hz extraction. \\
+        \code{mag\_lockin\_vector\_75hz.sv} & Performs rolling-window lock-in filtering and vector $H^2$ calculation. \\
+        \code{h2\_average\_3sensor.sv} & Averages the latest 10 complete $H^2$ frames before classification. \\
+        \code{h2\_lut\_classifier\_3sensor.sv} & Compares live normalized $H^2$ features with LUT ROM entries. \\
+        \code{platform\_tracker\_controller.sv} & Converts local key decisions into one-key platform movement commands. \\
+        \code{stepper\_drv8825\_controller.sv} & Generates STEP, DIR, and ENABLE\_N signals for the DRV8825. \\
+        \code{mag\_uart\_streamer.sv} & Streams $H^2$ and final key/press frames to the PC. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\subsection{Sensor Readout}
+
+Each QMC5883P controller checks the chip ID, configures the sensor for continuous measurement, and repeatedly reads the X, Y, and Z magnetic-field registers. In the current configuration, the sensor is set to continuous mode, 200 Hz output data rate, and $\pm 2$ G range. The FPGA receives three signed 16-bit raw values from each sensor.
+
+The controller emits a one-clock \code{sample\_valid} pulse after each fresh sensor sample. Since the three I2C controllers do not necessarily finish in the same clock cycle, the top-level design collects valid pulses into a mask. A new lock-in sample is accepted only after all active sensors have produced a new sample.
+
+\subsection{Magnetometer Calibration}
+
+The calibration stage compensates for sensor offset and axis-scale mismatch. During calibration, the user rotates the complete sensor assembly. The FPGA records the maximum and minimum value for each active sensor axis:
+
+\begin{equation}
+    \mathrm{offset} = \frac{\mathrm{max} + \mathrm{min}}{2}.
+\end{equation}
+
+The measured radius of each axis is
+
+\begin{equation}
+    r_{\mathrm{axis}} = \frac{\mathrm{max} - \mathrm{min}}{2}.
+\end{equation}
+
+The scale coefficient is derived by comparing each axis radius to a target radius:
+
+\begin{equation}
+    \mathrm{scale}_{\mathrm{axis}} =
+    \frac{r_{\mathrm{target}}}{r_{\mathrm{axis}}}.
+\end{equation}
+
+The calibrated output is then
+
+\begin{equation}
+    B_{\mathrm{cal}} = (B_{\mathrm{raw}} - \mathrm{offset}) \cdot \mathrm{scale}.
+\end{equation}
+
+This correction is implemented on FPGA. No Python calibration is needed during the final runtime.
+
+\placeholderfigure{Insert a diagram of the FPGA datapath: I2C readout, calibration, lock-in, H2 averaging, classifier, platform tracker, UART.}{FPGA datapath architecture.}{fig:fpga_datapath}{figures/fpga_datapath.png}

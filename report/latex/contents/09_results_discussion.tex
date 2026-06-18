@@ -1,0 +1,54 @@
+\section{Results and Discussion}
+\label{sec:results_discussion}
+
+\subsection{Demonstrated Functions}
+
+The final system demonstrates the following functions:
+
+\begin{itemize}
+    \item Three QMC5883P magnetometers are read continuously by the FPGA through independent I2C buses.
+    \item The FPGA calibrates magnetometer offsets and scale mismatch.
+    \item The FPGA separates 75 Hz and 45 Hz magnetic components through digital lock-in filtering.
+    \item The FPGA computes $H^2$ values for each sensor and each frequency.
+    \item The FPGA classifies local key position with measured LUT ROMs.
+    \item The FPGA converts local key results into global key indices using the current platform center.
+    \item The FPGA controls the DRV8825 stepper driver to move the sensing platform.
+    \item The PC receives only the final key/press state and plays notes.
+\end{itemize}
+
+\subsection{Classification Accuracy Observations}
+
+During development, Python classification using the measured LUT produced good key classification results. The first FPGA classifier did not initially match the Python behavior because the error formula was not identical. After modifying the FPGA to use the same normalized-ratio score and the same logarithmic strength term, the FPGA classification became significantly more accurate.
+
+The final feature vector is:
+
+\begin{equation}
+    [f_1, f_2, f_3, \ln(H_{\mathrm{total}}^2)].
+\end{equation}
+
+This feature performed better than direct raw $H^2$ comparison because the normalized ratios preserve spatial pattern while reducing sensitivity to total magnitude variation.
+
+\subsection{Latency and Stability}
+
+Several averaging and filtering stages affect response time:
+
+\begin{enumerate}
+    \item The lock-in filter uses a 100-sample rolling coherent window.
+    \item The classifier input uses a 10-frame rolling $H^2$ average.
+    \item The platform tracker requires three stable movement decisions before moving.
+    \item The tracker uses a 100 ms cooldown after stepper movement.
+\end{enumerate}
+
+These stages improve stability and noise rejection, but they also introduce delay. The most visible effect is after platform movement: the $H^2$ average and lock-in windows can still contain samples from before the platform moved. If a key is pressed immediately after the platform finishes moving, the classification may occasionally be off by one key. Waiting briefly after movement gives the rolling windows time to fill with samples from the new platform position.
+
+\subsection{Hardware and Debugging Challenges}
+
+Several practical issues shaped the final design:
+
+\begin{itemize}
+    \item \textbf{Sensor reliability:} At one point, a replacement magnetometer behaved abnormally and caused intermittent output freezing. Replacing the sensor solved the problem.
+    \item \textbf{FPGA resource usage:} Early filtering implementations used too many logic resources. The lock-in product history was moved to M9K-style RAM storage to reduce LAB usage.
+    \item \textbf{Raw versus normalized features:} Raw $H^2$ values could be misleading because magnitude changes dominate the error. Normalized ratios plus a small strength term produced better classification.
+    \item \textbf{Stepper motor behavior:} Abrupt direction changes can cause vibration or missed motion. The final controller uses stable-decision gating and cooldown to reduce unnecessary moves.
+    \item \textbf{Audio latency:} The Python interface originally played short fixed clips. It was later changed to held-note playback so the sound starts and stops with the FPGA press state.
+\end{itemize}

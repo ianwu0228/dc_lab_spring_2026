@@ -1,0 +1,119 @@
+% ---------------------------------------------------------------------
+% Digital Circuit Lab Final Project Report Style
+% ---------------------------------------------------------------------
+\ProvidesPackage{Report}[2026/06/18 Digital Circuit Lab Final Project Report]
+
+\RequirePackage[utf8]{inputenc}
+\RequirePackage[T1]{fontenc}
+\RequirePackage{lmodern}
+\RequirePackage{geometry}
+\RequirePackage{graphicx}
+\RequirePackage{titling}
+\RequirePackage{hyperref}
+\RequirePackage{fancyhdr}
+\RequirePackage[table]{xcolor}
+\RequirePackage{amsmath,amssymb}
+\RequirePackage{array}
+\RequirePackage{booktabs}
+\RequirePackage{enumitem}
+\RequirePackage{float}
+\RequirePackage{subcaption}
+\RequirePackage{caption}
+\RequirePackage{listings}
+\RequirePackage{tabularx}
+\RequirePackage[title,titletoc]{appendix}
+\RequirePackage[sort&compress,square,comma,numbers]{natbib}
+
+\geometry{
+    left=19mm,
+    right=19mm,
+    top=27mm,
+    bottom=22mm
+}
+
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+\setlength{\headheight}{14.5pt}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue
+}
+
+\newcommand{\mytitle}{Untitled}
+\newcommand{\mygroup}{}
+\newcommand{\myauthors}{No authors defined}
+\newcommand{\documentdate}{\today}
+\newcommand{\department}{No department specified}
+
+\renewcommand{\title}[1]{\renewcommand{\mytitle}{#1}}
+\newcommand{\setgroup}[1]{\renewcommand{\mygroup}{#1}}
+\newcommand{\setauthors}[1]{\renewcommand{\myauthors}{#1}}
+\newcommand{\setdate}[1]{\renewcommand{\documentdate}{#1}}
+\newcommand{\setdepartment}[1]{\renewcommand{\department}{#1}}
+
+\renewcommand{\maketitle}{
+    \begingroup
+    \setlength{\parskip}{0pt}
+    \begin{center}
+        {\LARGE\bfseries \mytitle \par}
+        \vspace{0.8em}
+        \ifx\mygroup\empty\else
+            {\large\bfseries \mygroup \par}
+            \vspace{0.4em}
+        \fi
+        {\large \myauthors \par}
+        \vspace{0.4em}
+        {\normalsize \department \par}
+        \vspace{0.4em}
+        {\normalsize \documentdate \par}
+        \vspace{0.8em}
+        \hrule
+    \end{center}
+    \endgroup
+}
+
+\fancypagestyle{mystyle}{
+    \fancyhf{}
+    \fancyhead[L]{Digital Circuit Lab}
+    \fancyhead[R]{Final Project Report}
+    \fancyfoot[C]{\thepage}
+}
+\pagestyle{mystyle}
+
+\setlist[itemize]{leftmargin=1.4em}
+\setlist[enumerate]{leftmargin=1.6em}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    columns=fullflexible,
+    frame=single,
+    xleftmargin=0.5em,
+    xrightmargin=0.5em
+}
+
+\newcommand{\placeholderfigure}[4]{
+    \begin{figure}[H]
+        \centering
+        \IfFileExists{#4}{
+            \includegraphics[width=0.86\textwidth,height=0.58\textheight,keepaspectratio]{#4}
+        }{
+            \fbox{
+                \begin{minipage}[c][5.2cm][c]{0.86\textwidth}
+                    \centering
+                    \textbf{Figure placeholder}\\[0.5em]
+                    #1\\[0.8em]
+                    \textbf{Expected image file:}\\
+                    \texttt{\detokenize{#4}}
+                \end{minipage}
+            }
+        }
+        \caption{#2}
+        \label{#3}
+    \end{figure}
+}
+
+\newcommand{\code}[1]{\texttt{#1}}

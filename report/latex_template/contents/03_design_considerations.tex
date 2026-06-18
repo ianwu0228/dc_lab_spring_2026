@@ -1,0 +1,30 @@
+\section{Design Considerations}
+\label{sec:design_considerations}
+
+This section explains how the target specifications are translated into circuit
+requirements. Include first-order calculations, design constraints, and the main
+trade-offs that guide the implementation.
+
+\subsection{Requirement Derivation}
+
+Derive the minimum requirements for the most critical circuit parameters. Typical
+examples include gain, bandwidth, noise, settling time, slew rate, output swing,
+matching, input common-mode range, or loading.
+
+\begin{equation}
+    \text{Required parameter} = \text{function of target specifications}.
+\end{equation}
+
+State the final requirement clearly after each derivation.
+
+\subsection{Design Trade-Offs}
+
+Discuss the trade-offs that shape the circuit choices. Focus on constraints that
+meaningfully affect the final design, such as speed versus power, gain versus
+bandwidth, device size versus parasitic capacitance, and accuracy versus area.
+
+\subsection{Verification Plan}
+
+Summarize the simulations needed to verify the design. Include the testbench
+condition, process corner, temperature, supply voltage, input condition, and
+metric extraction method when applicable.

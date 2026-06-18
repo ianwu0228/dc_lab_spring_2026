@@ -1,0 +1,29 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+This project demonstrates a magnetic-field-based piano interface in which the FPGA performs the main real-time computation. The final system reads three magnetometers, calibrates their outputs, extracts 75 Hz and 45 Hz magnetic-field strength using lock-in filtering, computes $H^2$, classifies key position using FPGA LUT ROMs, controls a stepper-driven sliding platform, and sends final key/press states to a PC for sound output.
+
+The main technical result is the FPGA-side LUT classifier. By using normalized $H^2$ ratios and a logarithmic strength term, the classifier compares the spatial magnetic pattern instead of only the absolute field magnitude. This made the FPGA result consistent with the Python prototype and improved key classification accuracy.
+
+The sliding platform further extends the sensing range. A five-key local magnetic sensing window can be mapped to a 15-key global keyboard using the platform center state. The formula
+
+\begin{equation}
+    k_{\mathrm{global}} = k_{\mathrm{center}} + k_{\mathrm{local}}
+\end{equation}
+
+allows the FPGA to report global key positions while the mechanical platform moves by one-key increments.
+
+\subsection{Future Work}
+
+Future improvements include:
+
+\begin{itemize}
+    \item Resetting or flushing the lock-in and $H^2$ averaging windows after platform movement to reduce immediate post-move classification errors.
+    \item Adding acceleration and deceleration profiles for smoother stepper motor motion.
+    \item Expanding the LUT or using interpolation for smoother position estimation.
+    \item Adding more sensors to improve robustness and coverage.
+    \item Generating audio directly from FPGA instead of relying on the PC for sound output.
+    \item Integrating a cleaner mechanical keyboard frame for repeatable finger height and key position.
+\end{itemize}
+
+Overall, the project shows that magnetic-field sensing can be combined with FPGA signal processing to build an interactive musical input device with real-time classification and platform control.

@@ -1,0 +1,76 @@
+\section{Frequency Separation and Signal Processing}
+\label{sec:signal_processing}
+
+\subsection{Dual-Frequency Encoding}
+
+The two electromagnets are driven at different frequencies:
+
+\begin{equation}
+    f_1 = 75~\mathrm{Hz}, \qquad f_2 = 45~\mathrm{Hz}.
+\end{equation}
+
+This frequency separation allows the FPGA to identify the magnetic contribution of each finger even though all sensors measure the sum of both fields plus ambient noise. The FPGA extracts the energy at each target frequency independently.
+
+\subsection{Digital Lock-In Filtering}
+
+For each sensor and each target frequency, the FPGA performs a digital lock-in operation. The calibrated magnetic signal is multiplied by a reference cosine and sine:
+
+\begin{align}
+    I[n] &= x[n]\cos(\omega n), \\
+    Q[n] &= x[n]\sin(\omega n).
+\end{align}
+
+The products are accumulated over a rolling window. For one axis, the accumulated in-phase and quadrature components are:
+
+\begin{align}
+    I_{\mathrm{acc}} &= \sum_{n=0}^{N-1} x[n]\cos(\omega n), \\
+    Q_{\mathrm{acc}} &= \sum_{n=0}^{N-1} x[n]\sin(\omega n),
+\end{align}
+
+where $N=\code{WINDOW\_SAMPLES}=100$ in the final design.
+
+The same operation is applied to the X, Y, and Z axes. The lock-in output energy for one sensor is:
+
+\begin{equation}
+    H^2 =
+    X_I^2 + X_Q^2 +
+    Y_I^2 + Y_Q^2 +
+    Z_I^2 + Z_Q^2.
+    \label{eq:h2_lockin}
+\end{equation}
+
+\subsection{Why the Lock-In Window Filters the Signal}
+
+When the input signal contains the same frequency as the reference, the product accumulates coherently. When the signal is DC, noise, or another frequency, the positive and negative products tend to cancel. Therefore, the 75 Hz extractor responds strongly to the 75 Hz electromagnet and weakly to the 45 Hz electromagnet. The 45 Hz extractor behaves similarly for the other finger.
+
+\subsection{Window Length Trade-Off}
+
+The final design uses a 100-sample rolling lock-in window. A larger window improves frequency selectivity and noise rejection, but it also increases latency. A smaller window responds faster, but it gives less separation between 45 Hz, 75 Hz, DC, and noise. This trade-off is important because the key classifier receives the filtered $H^2$ values.
+
+\begin{table}[H]
+    \centering
+    \caption{Effect of lock-in window size.}
+    \label{tab:window_tradeoff}
+    \renewcommand{\arraystretch}{1.2}
+    \begin{tabularx}{0.9\textwidth}{p{3.5cm} X X}
+        \toprule
+        \textbf{Window size} & \textbf{Advantage} & \textbf{Disadvantage} \\
+        \midrule
+        Larger & Better noise rejection and frequency separation & Slower response after movement \\
+        Smaller & Faster response & Noisier $H^2$ and weaker frequency rejection \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\subsection{Additional \texorpdfstring{$H^2$}{H2} Averaging}
+
+After the lock-in stage, the FPGA applies a second, simpler rolling average before classification. The module \code{h2\_average\_3sensor.sv} averages the latest 10 complete $H^2$ frames for each frequency. This reduces classification jitter and matches the Python prototype's default averaging behavior. The resulting path is:
+
+\begin{lstlisting}
+100-sample lock-in window
+-> H^2 output
+-> 10-frame H^2 rolling average
+-> LUT classifier
+\end{lstlisting}
+
+This averaging improves stability but can briefly retain old samples after the platform moves. This effect is discussed in Section~\ref{sec:results_discussion}.

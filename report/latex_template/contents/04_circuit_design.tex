@@ -1,0 +1,53 @@
+\section{Circuit Design}
+\label{sec:circuit_design}
+
+Present the transistor-level or block-level circuit implementation. Each
+subsection should correspond to one major block in the architecture section.
+
+\subsection{Main Circuit Block}
+
+Describe the selected topology and explain why it satisfies the requirements
+derived in Section~\ref{sec:design_considerations}. Include the schematic after
+the design is finalized.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox[c][5cm][c]{0.85\textwidth}{
+        \centering
+        Replace this box with the main circuit schematic.
+    }}
+    \caption{Schematic of the main circuit block.}
+    \label{fig:main_circuit}
+\end{figure}
+
+\subsection{Biasing and Supporting Circuits}
+
+Describe the bias circuit, common-mode generation, clock generation, reference
+generation, or other supporting circuitry required by the design.
+
+\subsection{Device Sizing}
+
+Summarize the final device dimensions or component values. Add or remove columns
+based on the project requirements.
+
+\begin{table}[H]
+    \centering
+    \caption{Device sizing summary.}
+    \label{tab:device_sizing}
+    \renewcommand{\arraystretch}{1.2}
+    \begin{tabular}{c c c c}
+        \toprule
+        \textbf{Device} & \textbf{Width / Fin} & \textbf{Length} & \textbf{Multiplier} \\
+        \midrule
+        TBD & TBD & TBD & TBD \\
+        TBD & TBD & TBD & TBD \\
+        TBD & TBD & TBD & TBD \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Implementation Notes}
+
+Record practical design decisions that are useful for review, such as layout
+concerns, parasitic sensitivity, startup behavior, stability margin, or simulation
+shortcuts.

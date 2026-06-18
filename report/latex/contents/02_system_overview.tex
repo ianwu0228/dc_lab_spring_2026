@@ -1,0 +1,69 @@
+\section{System Overview}
+\label{sec:system_overview}
+
+Figure~\ref{fig:system_block_diagram} shows the intended top-level data flow. The electromagnets generate AC magnetic fields. The magnetometers sense the field, and the FPGA converts raw magnetic samples into classified key positions. The sliding platform keeps the five-key sensing window near the active fingers. Finally, the PC receives key and press states and produces the visual and audio output.
+
+\placeholderfigure{Insert the system block diagram from the slides or redraw it: electromagnets, sensors, FPGA, LUT classifier, stepper platform, UART, and PC piano GUI.}{Top-level system architecture.}{fig:system_block_diagram}{figures/system_block_diagram.pdf}
+
+\subsection{Runtime Data Path}
+
+The final runtime path is:
+
+\begin{lstlisting}
+Electromagnets
+-> QMC5883P magnetometers
+-> FPGA I2C readout
+-> FPGA calibration
+-> FPGA 75/45 Hz lock-in filtering
+-> FPGA H^2 computation
+-> FPGA LUT key classification
+-> FPGA platform tracking and stepper control
+-> UART key/press frame
+-> PC piano GUI and sound output
+\end{lstlisting}
+
+Only the last step uses the PC. The FPGA calculates the magnetic features, classifies the keys, maintains the platform center, and directly drives the DRV8825 stepper driver.
+
+\subsection{Major Subsystems}
+
+\begin{table}[H]
+    \centering
+    \caption{Major project subsystems.}
+    \label{tab:major_subsystems}
+    \renewcommand{\arraystretch}{1.2}
+    \begin{tabularx}{0.96\textwidth}{p{3.2cm} X p{3.2cm}}
+        \toprule
+        \textbf{Subsystem} & \textbf{Function} & \textbf{Implementation} \\
+        \midrule
+        Magnetic source & Generate distinguishable magnetic fields for two fingers & 75 Hz and 45 Hz electromagnets \\
+        Sensor front end & Measure three-axis magnetic field & Three QMC5883P magnetometers \\
+        FPGA sensing pipeline & Read sensors, calibrate, filter, compute $H^2$ & SystemVerilog modules on DE2-115 \\
+        Key classifier & Compare live magnetic feature to LUT entries & FPGA ROM and fixed-point score calculation \\
+        Platform tracker & Move local sensing window across 15-key global layout & FPGA controller plus DRV8825 stepper driver \\
+        PC interface & Display keys and play notes & Python UART receiver and sound generator \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\subsection{Local and Global Key Coordinates}
+
+The classifier directly detects the key inside the current five-key local window. We represent the local index as
+
+\begin{equation}
+    k_{\mathrm{local}} \in \{-2,-1,0,+1,+2\},
+\end{equation}
+
+where local index 0 is the key directly above the center of the sensor platform. The complete keyboard uses global indices
+
+\begin{equation}
+    k_{\mathrm{global}} \in \{0,1,\ldots,14\}.
+\end{equation}
+
+If the platform center is currently under global key $k_{\mathrm{center}}$, then the global key is
+
+\begin{equation}
+    k_{\mathrm{global}} = k_{\mathrm{center}} + k_{\mathrm{local}}.
+    \label{eq:local_global}
+\end{equation}
+
+This relation is the core link between local magnetic classification and full-keyboard operation.

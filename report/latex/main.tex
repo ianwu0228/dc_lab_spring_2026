@@ -1,0 +1,44 @@
+\documentclass[a4paper,12pt]{article}
+
+\usepackage{Report}
+
+\title{Magnetic Field Finger-Tracking Musical Glove}
+\setgroup{Group 7}
+\setauthors{
+    B11202010 Yu-Min Han \\
+    B11901188 Yi-En Wu \\
+    B11901193 Yu-Tzu Liu
+}
+\setdepartment{Department of Electrical Engineering, National Taiwan University}
+\setdate{June 18, 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This project implements a magnetic-field-based piano interface on the DE2-115 FPGA platform. Two AC electromagnets, driven at 75 Hz and 45 Hz, are used as distinguishable finger markers. Three QMC5883P magnetometers observe the resulting magnetic field, and the FPGA performs magnetometer readout, calibration, frequency-selective lock-in extraction, $H^2$ computation, LUT-based key classification, and stepper-motor platform tracking. The PC is only used as the final user interface: it receives FPGA-computed key and press states through RS232/UART, highlights the detected piano keys, and plays the corresponding tones. The final system demonstrates that magnetic sensing can provide a practical non-visual interface for localizing finger position and controlling a musical keyboard-like interaction.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\input{contents/01_introduction.tex}
+\input{contents/02_system_overview.tex}
+\input{contents/03_hardware_implementation.tex}
+\input{contents/04_fpga_architecture.tex}
+\input{contents/05_signal_processing.tex}
+\input{contents/06_lut_classification.tex}
+\input{contents/07_platform_tracking.tex}
+\input{contents/08_pc_interface.tex}
+\input{contents/09_results_discussion.tex}
+\input{contents/10_conclusion.tex}
+
+\begin{appendices}
+\input{back/appendix01.tex}
+\end{appendices}
+
+\bibliographystyle{ieeetr}
+\bibliography{back/references.bib}
+
+\end{document}

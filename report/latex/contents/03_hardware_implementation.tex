@@ -1,0 +1,91 @@
+\section{Hardware Implementation}
+\label{sec:hardware_implementation}
+
+\subsection{Magnetic Field Generation}
+
+The project uses AC electromagnets instead of permanent magnets for the final two-finger system. The reason is that AC excitation allows frequency multiplexing: one finger can be driven at 75 Hz and the other at 45 Hz. The FPGA can then separate the two fingers by filtering at each frequency. This follows the same general principle used by Finexus, where multiple electromagnets are distinguished by their operating frequencies \cite{chen2016finexus}.
+
+The analog magnetic-source chain is:
+
+\begin{lstlisting}
+Arduino waveform table
+-> MCP4725 DAC
+-> TPA3110D2 power amplifier
+-> electromagnet coil
+\end{lstlisting}
+
+The Arduino and DAC are used only as waveform-generation hardware. They do not perform localization or key classification. The localization and control decisions are implemented on FPGA.
+
+\placeholderfigure{Insert oscilloscope captures or a diagram showing the DAC waveform, amplifier output, and electromagnet coil connection.}{AC electromagnet driving chain.}{fig:coil_driver_chain}{figures/coil_driver_chain.jpg}
+
+\subsection{Magnetometer Array}
+
+Three QMC5883P magnetometers are used in the final system. Each sensor is connected to an independent I2C-style bus implemented with FPGA GPIO pins. The independent buses avoid address conflicts and allow each sensor to be read with a dedicated controller instance.
+
+\begin{table}[H]
+    \centering
+    \caption{Magnetometer GPIO assignment.}
+    \label{tab:magnetometer_gpio}
+    \renewcommand{\arraystretch}{1.2}
+    \begin{tabular}{c c c c}
+        \toprule
+        \textbf{Sensor} & \textbf{Signal} & \textbf{DE2 GPIO} & \textbf{FPGA Pin} \\
+        \midrule
+        1 & SCL & GPIO[0] & PIN\_AB22 \\
+        1 & SDA & GPIO[1] & PIN\_AC15 \\
+        2 & SCL & GPIO[2] & PIN\_AB21 \\
+        2 & SDA & GPIO[3] & PIN\_Y17 \\
+        3 & SCL & GPIO[4] & PIN\_AC21 \\
+        3 & SDA & GPIO[5] & PIN\_Y16 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The FPGA drives the SDA lines in an open-drain style: it actively drives low when needed and otherwise releases the line to high impedance. Pull-up resistors are required either on the breakout boards or externally.
+
+\subsection{Stepper Motor and Sliding Platform}
+
+The sensor platform is mounted on a sliding rail. A stepper motor controlled through a DRV8825 driver moves the platform by discrete one-key steps. This mechanical design allows a small local sensing window to cover a larger keyboard. The final measured relation is:
+
+\begin{equation}
+    1~\mathrm{key} = 2~\mathrm{cm} = 100~\mathrm{motor~steps}.
+\end{equation}
+
+The FPGA sends three digital signals to the DRV8825:
+
+\begin{table}[H]
+    \centering
+    \caption{DRV8825 control signals.}
+    \label{tab:drv8825_gpio}
+    \renewcommand{\arraystretch}{1.2}
+    \begin{tabular}{c c c p{6.5cm}}
+        \toprule
+        \textbf{Signal} & \textbf{DE2 GPIO} & \textbf{FPGA Pin} & \textbf{Meaning} \\
+        \midrule
+        STEP & GPIO[8] & PIN\_AD15 & A rising edge advances one step or microstep. \\
+        DIR & GPIO[9] & PIN\_AE15 & Selects motor direction. \\
+        ENABLE\_N & GPIO[10] & PIN\_AC19 & Active-low driver enable. \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Press Buttons}
+
+Two active-high press buttons are used to indicate whether the detected finger is actually pressing a key. Their signals are debounced on FPGA for 10 ms before being transmitted to the PC.
+
+\begin{table}[H]
+    \centering
+    \caption{Press button assignment.}
+    \label{tab:button_gpio}
+    \renewcommand{\arraystretch}{1.2}
+    \begin{tabular}{c c c p{6.5cm}}
+        \toprule
+        \textbf{Button} & \textbf{DE2 GPIO} & \textbf{FPGA Pin} & \textbf{Meaning} \\
+        \midrule
+        Button 0 & GPIO[11] & PIN\_AF16 & Press state for the 75 Hz tracked note. \\
+        Button 1 & GPIO[12] & PIN\_AD19 & Press state for the 45 Hz tracked note. \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\placeholderfigure{Insert a photo of the final sliding platform with sensors, stepper motor, and key layout.}{Sliding platform and sensing window.}{fig:sliding_platform}{figures/sliding_platform.jpg}

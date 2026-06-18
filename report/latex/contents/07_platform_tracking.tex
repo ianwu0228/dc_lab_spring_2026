@@ -1,0 +1,104 @@
+\section{Platform Tracking and Global Key Mapping}
+\label{sec:platform_tracking}
+
+\subsection{Need for a Sliding Platform}
+
+The three-sensor array only provides reliable classification over a local five-key window. However, the desired piano layout contains 15 global keys. To extend the effective range without adding more sensors, the sensor platform is mounted on a stepper-driven rail. The FPGA moves the platform so that the active fingers remain near the center of the local sensing window.
+
+\subsection{Local-to-Global Conversion}
+
+The local key index is
+
+\begin{equation}
+    k_{\mathrm{local}} \in \{-2,-1,0,+1,+2\}.
+\end{equation}
+
+The global key index is
+
+\begin{equation}
+    k_{\mathrm{global}} \in \{0,1,\ldots,14\}.
+\end{equation}
+
+If the platform center is at global key $k_{\mathrm{center}}$, then
+
+\begin{equation}
+    k_{\mathrm{global}} = k_{\mathrm{center}} + k_{\mathrm{local}}.
+\end{equation}
+
+For example, if the platform is centered at global key 12, then the five local indices map to:
+
+\begin{table}[H]
+    \centering
+    \caption{Example local-to-global mapping for platform center 12.}
+    \label{tab:local_global_example}
+    \renewcommand{\arraystretch}{1.2}
+    \begin{tabular}{c c c c c}
+        \toprule
+        $k_{\mathrm{local}}=-2$ & $-1$ & $0$ & $+1$ & $+2$ \\
+        \midrule
+        10 & 11 & 12 & 13 & 14 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Two-Finger Centering Rule}
+
+The 75 Hz finger is assumed to be the left finger and the 45 Hz finger is assumed to be the right finger. After classification, the FPGA obtains two local indices:
+
+\begin{equation}
+    k_{75}, k_{45} \in \{-2,-1,0,+1,+2\}.
+\end{equation}
+
+The controller computes:
+
+\begin{equation}
+    S = k_{75} + k_{45}.
+\end{equation}
+
+The movement rule is:
+
+\begin{equation}
+\begin{cases}
+    S \le -2, & \text{move platform left by one key}, \\
+    S \ge +2, & \text{move platform right by one key}, \\
+    -2 < S < +2, & \text{stay}.
+\end{cases}
+\end{equation}
+
+This rule keeps the center of the two fingers near the center of the sensing platform.
+
+\subsection{Motor Control Parameters}
+
+The measured mechanical calibration is:
+
+\begin{equation}
+    1~\mathrm{key} = 100~\mathrm{steps}.
+\end{equation}
+
+The final FPGA stepper controller uses:
+
+\begin{itemize}
+    \item Step rate: 800 steps/s.
+    \item STEP high pulse width: 5 us.
+    \item Fixed movement: 100 steps per automatic one-key move.
+    \item Allowed platform center: global keys 2 through 12.
+    \item Initial platform center: global key 12.
+\end{itemize}
+
+\subsection{Stability and Cooldown}
+
+To avoid reacting to momentary classification noise, the platform tracker requires the same movement request for three consecutive decisions:
+
+\begin{equation}
+    \code{STABLE\_COUNT} = 3.
+\end{equation}
+
+After a movement completes, the tracker waits:
+
+\begin{equation}
+    \code{COOLDOWN\_MS} = 100~\mathrm{ms}.
+\end{equation}
+
+This cooldown prevents immediate repeated movement. However, classification output can still be affected by stale samples in the lock-in and $H^2$ averaging windows immediately after movement. In practice, this can cause occasional $\pm 1$ key errors if a press occurs immediately after the platform stops.
+
+\placeholderfigure{Insert a diagram showing the local five-key window sliding across the 15-key global keyboard.}{Sliding platform extends local sensing to global key tracking.}{fig:platform_tracking}{figures/platform_tracking.png}
